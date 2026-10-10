@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file alias="android.png">assets/android.png</file>
+    </qresource>
+</RCC>
