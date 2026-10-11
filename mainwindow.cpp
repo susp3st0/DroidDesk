@@ -535,19 +535,15 @@ void MainWindow::buildUi()
     auto *wallpaperPath = new QLineEdit;
     wallpaperPath->setPlaceholderText("Choose a wallpaper image…");
     auto *browseWallpaper = makeButton("Browse");
-    auto *setHomeWallpaper = makeButton("Set home screen", "primary");
-    auto *setLockWallpaper = makeButton("Set lock screen");
-    auto *setBothWallpaper = makeButton("Set both");
+    auto *setWallpaper = makeButton("Choose wallpaper on device", "primary");
     wallpaperRow->addWidget(wallpaperPath, 1);
     wallpaperRow->addWidget(browseWallpaper);
     personalizeLayout->addLayout(wallpaperRow);
     auto *wallpaperButtons = new QHBoxLayout;
-    wallpaperButtons->addWidget(setHomeWallpaper);
-    wallpaperButtons->addWidget(setLockWallpaper);
-    wallpaperButtons->addWidget(setBothWallpaper);
+    wallpaperButtons->addWidget(setWallpaper);
     wallpaperButtons->addStretch();
     personalizeLayout->addLayout(wallpaperButtons);
-    auto *wallpaperTip = new QLabel("Uses the standard Android wallpaper service. Some manufacturers restrict lock-screen wallpaper changes.");
+    auto *wallpaperTip = new QLabel("Android will open its wallpaper picker. Choose home screen, lock screen, or both there. Some manufacturers restrict lock-screen wallpaper changes.");
     wallpaperTip->setObjectName("muted");
     wallpaperTip->setWordWrap(true);
     personalizeLayout->addWidget(wallpaperTip);
@@ -1041,7 +1037,7 @@ void MainWindow::buildUi()
         if (!path.isEmpty())
             wallpaperPath->setText(path);
     });
-    const auto applyWallpaper = [this, wallpaperPath](int which) {
+    const auto applyWallpaper = [this, wallpaperPath] {
         const QString path = wallpaperPath->text().trimmed();
         if (path.isEmpty() || !QFileInfo::exists(path)) {
             QMessageBox::warning(this, "Wallpaper", "Choose an existing image file first.");
@@ -1062,23 +1058,26 @@ void MainWindow::buildUi()
             showResult({}, pushResult);
             return;
         }
-        const QStringList targets = which == 3
-                                        ? QStringList{"system", "lock"}
-                                        : QStringList{which == 1 ? "system" : "lock"};
-        for (const QString &target : targets) {
-            const auto result = runDevice({"shell", "cmd", "wallpaper", "set",
-                                           "--which", target, remote});
-            logCommand("Set " + target + " wallpaper", result);
-            if (!result.started || result.timedOut || result.exitCode != 0) {
-                showResult({}, result);
-                return;
-            }
+        const QString extension = suffix.toLower();
+        const QString mimeType = extension == "jpg" || extension == "jpeg"
+                                     ? QStringLiteral("image/jpeg")
+                                     : extension == "webp"
+                                           ? QStringLiteral("image/webp")
+                                           : QStringLiteral("image/png");
+        const QString imageUri = QStringLiteral("file://") + remote;
+        const auto result = runDevice({"shell", "am", "start",
+                                       "-a", "android.intent.action.ATTACH_DATA",
+                                       "-d", imageUri, "-t", mimeType,
+                                       "--es", "mimeType", mimeType});
+        logCommand("Open Android wallpaper picker", result);
+        if (!result.started || result.timedOut || result.exitCode != 0) {
+            showResult({}, result);
+            return;
         }
-        showResult("Wallpaper updated.", {0, {}, {}, true, false});
+        showResult("Choose the wallpaper target and confirm in the Android screen that opened.",
+                   {0, {}, {}, true, false});
     };
-    connect(setHomeWallpaper, &QPushButton::clicked, this, [applyWallpaper] { applyWallpaper(1); });
-    connect(setLockWallpaper, &QPushButton::clicked, this, [applyWallpaper] { applyWallpaper(2); });
-    connect(setBothWallpaper, &QPushButton::clicked, this, [applyWallpaper] { applyWallpaper(3); });
+    connect(setWallpaper, &QPushButton::clicked, this, applyWallpaper);
 
     connect(setDensity, &QPushButton::clicked, this, [this, densityInput] {
         bool ok = false;
