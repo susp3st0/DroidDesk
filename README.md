@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # DroidDesk
 
 DroidDesk is a Windows desktop utility for Android devices using Android Debug Bridge (ADB). It is a Qt Widgets application and uses the official `adb` executable for device operations.
@@ -44,3 +45,6 @@ Root-only commands and Magisk module actions invoke `su` only on a device that i
 ## Third-party software
 
 DroidDesk redistributes the official scrcpy v5.0.1 Windows x64 release without modification in `scrcpy\`. The upstream release SHA-256 is `b12a2c4ee8be317422451fc7dcf8ee20a71b5ea7ef9ad73ddd825a25316227a5`. scrcpy is licensed under the Apache License 2.0; see `scrcpy\LICENSE.txt` and the upstream source at https://github.com/Genymobile/scrcpy/tree/v5.0.1. The **Screen mirror** tab starts the scrcpy executable as a separate process and opens its own device-control window. OTG control is USB-only and has no video or audio; virtual display support depends on the Android version and device implementation. Recordings are saved to a user-selected local MP4 or MKV file.
+=======
+idk but this project is entirely vibe-coded not single handcoded, bcuz im bored
+>>>>>>> 5028972ff00ad02d9e943348881eadce7e7fc2ca
