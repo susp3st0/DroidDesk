@@ -2,15 +2,18 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QMap>
 #include <QProcess>
 #include <QStringList>
 #include <QVector>
 class QComboBox;
+class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPlainTextEdit;
 class QProcess;
+class QProgressBar;
 class QPushButton;
 class QTimer;
 class QListWidgetItem;
@@ -51,9 +54,11 @@ private:
     CommandResult runAdb(const QStringList &arguments, int timeoutMs = 30000);
     CommandResult runDevice(const QStringList &arguments, int timeoutMs = 30000);
     void buildUi();
-    void refreshDevices();
+    void refreshDevices(bool periodic = false);
     void refreshDeviceDetails();
     void refreshApps();
+    void installApk(const QString &path);
+    void launchScrcpy();
     void executeShellCommand();
     void startLogcat();
     void stopLogcat();
@@ -62,6 +67,8 @@ private:
     void refreshMagiskModules();
     void setMagiskModuleEnabled(bool enabled);
     void removeMagiskModule();
+    void checkRootStatus();
+    void runSelinuxCommand(bool changeMode, bool enforcing);
     void loadModuleCatalog();
     void showModuleDetails(QListWidgetItem *item);
     void downloadSelectedModule();
@@ -72,15 +79,22 @@ private:
     void handleDeviceDisconnected(const CommandResult &result);
     QString selectedSerial() const;
     QString adbExecutable() const;
+    QString scrcpyExecutable() const;
     QString shellQuote(const QString &value) const;
     void appendLog(const QString &text);
 
     QComboBox *m_devices = nullptr;
     QComboBox *m_systemApps = nullptr;
     QProcess *m_deviceScan = nullptr;
+    QTimer *m_devicePollTimer = nullptr;
     QProcess *m_deviceInfoQuery = nullptr;
+    QProcess *m_appListProcess = nullptr;
+    QProcess *m_appInstallProcess = nullptr;
+    QProcess *m_scrcpyProcess = nullptr;
     QProcess *m_logcatProcess = nullptr;
     QProcess *m_moduleInstallProcess = nullptr;
+    QProcess *m_rootCheckProcess = nullptr;
+    QProcess *m_selinuxProcess = nullptr;
     QLabel *m_connectionLabel = nullptr;
     QLabel *m_deviceNameLabel = nullptr;
     QLabel *m_androidLabel = nullptr;
@@ -90,12 +104,39 @@ private:
     QLabel *m_batteryLabel = nullptr;
     QLineEdit *m_appFilter = nullptr;
     QListWidget *m_appList = nullptr;
+    QPushButton *m_installAppButton = nullptr;
+    QComboBox *m_scrcpyMode = nullptr;
+    QComboBox *m_scrcpyMaxSize = nullptr;
+    QComboBox *m_scrcpyMaxFps = nullptr;
+    QLineEdit *m_scrcpyVirtualSize = nullptr;
+    QLineEdit *m_scrcpyRecordingPath = nullptr;
+    QCheckBox *m_scrcpyRecording = nullptr;
+    QCheckBox *m_scrcpyFlexDisplay = nullptr;
+    QCheckBox *m_scrcpyStayAwake = nullptr;
+    QCheckBox *m_scrcpyTurnScreenOff = nullptr;
+    QCheckBox *m_scrcpyAudio = nullptr;
+    QCheckBox *m_scrcpyAlwaysOnTop = nullptr;
+    QCheckBox *m_scrcpyShowTouches = nullptr;
+    QCheckBox *m_scrcpyOtgGamepad = nullptr;
+    QPushButton *m_scrcpyBrowseRecording = nullptr;
+    QPushButton *m_scrcpyStartButton = nullptr;
+    QLabel *m_scrcpyStatusLabel = nullptr;
+    QLabel *m_appInstallStatus = nullptr;
+    QProgressBar *m_appInstallProgress = nullptr;
     QLineEdit *m_remotePath = nullptr;
     QLineEdit *m_shellInput = nullptr;
     QLineEdit *m_rootShellInput = nullptr;
     QPlainTextEdit *m_output = nullptr;
     QPlainTextEdit *m_logcatOutput = nullptr;
     QPlainTextEdit *m_rootOutput = nullptr;
+    QLabel *m_rootStatusLabel = nullptr;
+    QLabel *m_selinuxStatusLabel = nullptr;
+    QLabel *m_moduleInstallStatus = nullptr;
+    QPlainTextEdit *m_moduleInstallLog = nullptr;
+    QProgressBar *m_moduleInstallProgress = nullptr;
+    QPushButton *m_selinuxCheckButton = nullptr;
+    QPushButton *m_selinuxEnforcingButton = nullptr;
+    QPushButton *m_selinuxPermissiveButton = nullptr;
     QListWidget *m_magiskModules = nullptr;
     QLineEdit *m_moduleSearch = nullptr;
     QListWidget *m_moduleCatalog = nullptr;
@@ -120,6 +161,8 @@ private:
     QStringList m_pendingLogcatLines;
     QTimer *m_logcatFlushTimer = nullptr;
     int m_droppedLogcatLines = 0;
+    QMap<QString, QString> m_deviceStates;
+    bool m_deviceSnapshotInitialized = false;
 };
 
 #endif

@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QAbstractItemView>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
@@ -24,9 +25,11 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QProcess>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QRegularExpressionValidator>
 #include <QSaveFile>
 #include <QSettings>
 #include <QSslSocket>
@@ -85,6 +88,12 @@ MainWindow::MainWindow(QWidget *parent)
     resize(1160, 790);
     setMinimumSize(920, 640);
     refreshDevices();
+    m_devicePollTimer = new QTimer(this);
+    m_devicePollTimer->setInterval(3000);
+    connect(m_devicePollTimer, &QTimer::timeout, this, [this] {
+        refreshDevices(true);
+    });
+    m_devicePollTimer->start();
     QTimer::singleShot(10000, this, [this] {
         if (m_devices->count() == 0)
             refreshDevices();
@@ -124,6 +133,31 @@ QString MainWindow::adbExecutable() const
         }
     }
     return "adb";
+}
+
+QString MainWindow::scrcpyExecutable() const
+{
+    QStringList searchRoots{QCoreApplication::applicationDirPath(), QDir::currentPath()};
+    const QString appDir = QCoreApplication::applicationDirPath();
+    QDir appDirectory(appDir);
+    for (int depth = 0; depth < 6; ++depth) {
+        searchRoots.append(appDirectory.absolutePath());
+        if (!appDirectory.cdUp())
+            break;
+    }
+    QSet<QString> checked;
+    for (const QString &root : searchRoots) {
+        if (root.isEmpty())
+            continue;
+        const QString normalizedRoot = QDir::cleanPath(root);
+        if (checked.contains(normalizedRoot))
+            continue;
+        checked.insert(normalizedRoot);
+        const QString candidate = QDir(normalizedRoot).filePath("scrcpy/scrcpy.exe");
+        if (QFileInfo::exists(candidate))
+            return QFileInfo(candidate).absoluteFilePath();
+    }
+    return {};
 }
 
 QString MainWindow::selectedSerial() const
@@ -252,7 +286,7 @@ void MainWindow::handleDeviceDisconnected(const CommandResult &result)
     const QString details = QString::fromLocal8Bit(result.error + '\n' + result.output).trimmed();
     if (!details.isEmpty())
         appendLog("Device connection lost: " + details);
-    QTimer::singleShot(500, this, &MainWindow::refreshDevices);
+    QTimer::singleShot(500, this, [this] { refreshDevices(); });
 }
 
 void MainWindow::buildUi()
@@ -356,6 +390,102 @@ void MainWindow::buildUi()
     homeLayout->addStretch();
     tabs->addTab(home, "  Overview  ");
 
+    QVBoxLayout *scrcpyLayout = nullptr;
+    auto *scrcpyPage = makeSection("Screen mirror and control", scrcpyLayout);
+    auto *scrcpyDescription = new QLabel(
+        "Mirror and control Android with scrcpy. Choose a mode, quality and recording options, then start the separate scrcpy window.");
+    scrcpyDescription->setObjectName("muted");
+    scrcpyDescription->setWordWrap(true);
+    scrcpyLayout->addWidget(scrcpyDescription);
+
+    auto *scrcpyModeRow = new QHBoxLayout;
+    scrcpyModeRow->addWidget(new QLabel("Mode"));
+    m_scrcpyMode = new QComboBox;
+    m_scrcpyMode->addItem("Mirror device screen", "mirror");
+    m_scrcpyMode->addItem("Virtual display", "virtual");
+    m_scrcpyMode->addItem("OTG control (USB)", "otg");
+    scrcpyModeRow->addWidget(m_scrcpyMode, 1);
+    scrcpyLayout->addLayout(scrcpyModeRow);
+
+    auto *scrcpyVirtualRow = new QHBoxLayout;
+    scrcpyVirtualRow->addWidget(new QLabel("Virtual display size"));
+    m_scrcpyVirtualSize = new QLineEdit("1280x720");
+    m_scrcpyVirtualSize->setValidator(
+        new QRegularExpressionValidator(QRegularExpression("^[0-9]{3,4}x[0-9]{3,4}$"),
+                                        m_scrcpyVirtualSize));
+    m_scrcpyVirtualSize->setMaximumWidth(130);
+    m_scrcpyFlexDisplay = new QCheckBox("Flex display (resize to window)");
+    scrcpyVirtualRow->addWidget(m_scrcpyVirtualSize);
+    scrcpyVirtualRow->addWidget(m_scrcpyFlexDisplay);
+    scrcpyVirtualRow->addStretch();
+    scrcpyLayout->addLayout(scrcpyVirtualRow);
+
+    auto *scrcpyQualityRow = new QHBoxLayout;
+    scrcpyQualityRow->addWidget(new QLabel("Maximum video size"));
+    m_scrcpyMaxSize = new QComboBox;
+    m_scrcpyMaxSize->addItem("Device default", "");
+    m_scrcpyMaxSize->addItem("720p", "720");
+    m_scrcpyMaxSize->addItem("1080p", "1080");
+    m_scrcpyMaxSize->addItem("1440p", "1440");
+    scrcpyQualityRow->addWidget(m_scrcpyMaxSize);
+    scrcpyQualityRow->addWidget(new QLabel("Frame rate"));
+    m_scrcpyMaxFps = new QComboBox;
+    m_scrcpyMaxFps->addItem("Device default", "");
+    m_scrcpyMaxFps->addItem("30 FPS", "30");
+    m_scrcpyMaxFps->addItem("60 FPS", "60");
+    m_scrcpyMaxFps->addItem("90 FPS", "90");
+    m_scrcpyMaxFps->addItem("120 FPS", "120");
+    scrcpyQualityRow->addWidget(m_scrcpyMaxFps);
+    scrcpyQualityRow->addStretch();
+    scrcpyLayout->addLayout(scrcpyQualityRow);
+
+    auto *scrcpyOptionsRow = new QHBoxLayout;
+    m_scrcpyAudio = new QCheckBox("Audio");
+    m_scrcpyAudio->setChecked(true);
+    m_scrcpyStayAwake = new QCheckBox("Keep device awake");
+    m_scrcpyTurnScreenOff = new QCheckBox("Turn device screen off");
+    m_scrcpyAlwaysOnTop = new QCheckBox("Always on top");
+    m_scrcpyShowTouches = new QCheckBox("Show touches");
+    scrcpyOptionsRow->addWidget(m_scrcpyAudio);
+    scrcpyOptionsRow->addWidget(m_scrcpyStayAwake);
+    scrcpyOptionsRow->addWidget(m_scrcpyTurnScreenOff);
+    scrcpyOptionsRow->addWidget(m_scrcpyAlwaysOnTop);
+    scrcpyOptionsRow->addWidget(m_scrcpyShowTouches);
+    scrcpyOptionsRow->addStretch();
+    scrcpyLayout->addLayout(scrcpyOptionsRow);
+
+    auto *scrcpyOtgRow = new QHBoxLayout;
+    m_scrcpyOtgGamepad = new QCheckBox("Enable gamepad in OTG mode");
+    scrcpyOtgRow->addWidget(m_scrcpyOtgGamepad);
+    scrcpyOtgRow->addStretch();
+    scrcpyLayout->addLayout(scrcpyOtgRow);
+
+    auto *scrcpyRecordRow = new QHBoxLayout;
+    m_scrcpyRecording = new QCheckBox("Record session");
+    m_scrcpyRecordingPath = new QLineEdit;
+    m_scrcpyRecordingPath->setPlaceholderText("Choose an MP4 or MKV recording file…");
+    m_scrcpyBrowseRecording = makeButton("Choose file…");
+    scrcpyRecordRow->addWidget(m_scrcpyRecording);
+    scrcpyRecordRow->addWidget(m_scrcpyRecordingPath, 1);
+    scrcpyRecordRow->addWidget(m_scrcpyBrowseRecording);
+    scrcpyLayout->addLayout(scrcpyRecordRow);
+
+    auto *scrcpyModeInfo = new QLabel;
+    scrcpyModeInfo->setObjectName("muted");
+    scrcpyModeInfo->setWordWrap(true);
+    scrcpyLayout->addWidget(scrcpyModeInfo);
+
+    auto *scrcpyActionsRow = new QHBoxLayout;
+    m_scrcpyStatusLabel = new QLabel("Ready.");
+    m_scrcpyStatusLabel->setObjectName("metric");
+    m_scrcpyStatusLabel->setWordWrap(true);
+    m_scrcpyStartButton = makeButton("Start scrcpy", "primary");
+    scrcpyActionsRow->addWidget(m_scrcpyStatusLabel, 1);
+    scrcpyActionsRow->addWidget(m_scrcpyStartButton);
+    scrcpyLayout->addLayout(scrcpyActionsRow);
+    scrcpyLayout->addStretch();
+    tabs->addTab(scrcpyPage, "  Screen mirror  ");
+
     QVBoxLayout *appsLayout = nullptr;
     auto *appsPage = makeSection("Apps", appsLayout);
     auto *appActions = new QHBoxLayout;
@@ -364,12 +494,24 @@ void MainWindow::buildUi()
     m_systemApps = new QComboBox;
     m_systemApps->addItems({"User apps", "All apps"});
     auto *listApps = makeButton("↻  List apps");
-    auto *installApp = makeButton("＋  Install APK", "primary");
+    m_installAppButton = makeButton("＋  Install APK", "primary");
     appActions->addWidget(m_appFilter, 1);
     appActions->addWidget(m_systemApps);
     appActions->addWidget(listApps);
-    appActions->addWidget(installApp);
+    appActions->addWidget(m_installAppButton);
     appsLayout->addLayout(appActions);
+    auto *installProgressRow = new QHBoxLayout;
+    m_appInstallStatus = new QLabel;
+    m_appInstallStatus->setObjectName("muted");
+    m_appInstallStatus->setVisible(false);
+    m_appInstallProgress = new QProgressBar;
+    m_appInstallProgress->setRange(0, 0);
+    m_appInstallProgress->setTextVisible(false);
+    m_appInstallProgress->setMaximumWidth(150);
+    m_appInstallProgress->setVisible(false);
+    installProgressRow->addWidget(m_appInstallStatus, 1);
+    installProgressRow->addWidget(m_appInstallProgress);
+    appsLayout->addLayout(installProgressRow);
     m_appList = new QListWidget;
     m_appList->setSelectionMode(QAbstractItemView::SingleSelection);
     appsLayout->addWidget(m_appList, 1);
@@ -493,6 +635,15 @@ void MainWindow::buildUi()
     rootInfo->setWordWrap(true);
     rootLayout->addWidget(rootInfo);
 
+    auto *rootCheckRow = new QHBoxLayout;
+    m_rootStatusLabel = new QLabel("Root status not checked.");
+    m_rootStatusLabel->setObjectName("metric");
+    m_rootStatusLabel->setWordWrap(true);
+    auto *checkRoot = makeButton("Check root", "primary");
+    rootCheckRow->addWidget(m_rootStatusLabel, 1);
+    rootCheckRow->addWidget(checkRoot);
+    rootLayout->addLayout(rootCheckRow);
+
     auto *rootTabs = new QTabWidget;
     rootLayout->addWidget(rootTabs, 1);
     QVBoxLayout *installedLayout = nullptr;
@@ -505,11 +656,17 @@ void MainWindow::buildUi()
     moduleHeader->addWidget(installModule);
     installedLayout->addLayout(moduleHeader);
 
+    auto *moduleColumns = new QHBoxLayout;
+    moduleColumns->setSpacing(0);
+    auto *moduleListPane = new QWidget;
+    auto *moduleListLayout = new QVBoxLayout(moduleListPane);
+    moduleListLayout->setContentsMargins(0, 0, 12, 0);
+    moduleListLayout->setSpacing(14);
     m_magiskModules = new QListWidget;
     m_magiskModules->setSelectionMode(QAbstractItemView::SingleSelection);
     auto *modulePlaceholder = new QListWidgetItem("Refresh to list installed modules.", m_magiskModules);
     modulePlaceholder->setFlags(Qt::NoItemFlags);
-    installedLayout->addWidget(m_magiskModules, 1);
+    moduleListLayout->addWidget(m_magiskModules, 1);
 
     auto *moduleActions = new QHBoxLayout;
     auto *enableModule = makeButton("Enable selected");
@@ -519,8 +676,69 @@ void MainWindow::buildUi()
     moduleActions->addWidget(disableModule);
     moduleActions->addWidget(removeModule);
     moduleActions->addStretch();
-    installedLayout->addLayout(moduleActions);
+    moduleListLayout->addLayout(moduleActions);
+
+    auto *moduleLogPane = new QWidget;
+    auto *moduleLogLayout = new QVBoxLayout(moduleLogPane);
+    moduleLogLayout->setContentsMargins(12, 0, 0, 0);
+    moduleLogLayout->setSpacing(14);
+    auto *moduleInstallHeader = new QHBoxLayout;
+    auto *moduleInstallLabel = new QLabel("Installation log");
+    moduleInstallLabel->setStyleSheet("font-size: 11pt; font-weight: 600;");
+    m_moduleInstallStatus = new QLabel("Ready.");
+    m_moduleInstallStatus->setObjectName("muted");
+    m_moduleInstallProgress = new QProgressBar;
+    m_moduleInstallProgress->setRange(0, 0);
+    m_moduleInstallProgress->setTextVisible(false);
+    m_moduleInstallProgress->setMaximumWidth(130);
+    m_moduleInstallProgress->setVisible(false);
+    auto *clearModuleInstallLog = makeButton("Clear");
+    moduleInstallHeader->addWidget(moduleInstallLabel);
+    moduleInstallHeader->addStretch();
+    moduleInstallHeader->addWidget(clearModuleInstallLog);
+    moduleLogLayout->addLayout(moduleInstallHeader);
+    auto *moduleInstallStatusRow = new QHBoxLayout;
+    moduleInstallStatusRow->addWidget(m_moduleInstallStatus, 1);
+    moduleInstallStatusRow->addWidget(m_moduleInstallProgress);
+    moduleLogLayout->addLayout(moduleInstallStatusRow);
+    m_moduleInstallLog = new QPlainTextEdit;
+    m_moduleInstallLog->setReadOnly(true);
+    m_moduleInstallLog->setMaximumBlockCount(250);
+    m_moduleInstallLog->setPlaceholderText("Magisk module copy and installer output will appear here.");
+    moduleLogLayout->addWidget(m_moduleInstallLog, 1);
+
+    moduleColumns->addWidget(moduleListPane, 1);
+    moduleColumns->addWidget(moduleLogPane, 1);
+    installedLayout->addLayout(moduleColumns, 1);
     rootTabs->addTab(installedPage, "Installed");
+
+    QVBoxLayout *selinuxLayout = nullptr;
+    auto *selinuxPage = makeSection("SELinux status and mode", selinuxLayout);
+    auto *selinuxInfo = new QLabel(
+        "SELinux protects Android system services. Permissive mode weakens device security and may be reset at reboot. Use only when you understand the impact.");
+    selinuxInfo->setObjectName("muted");
+    selinuxInfo->setWordWrap(true);
+    selinuxLayout->addWidget(selinuxInfo);
+    m_selinuxStatusLabel = new QLabel("SELinux status not checked.");
+    m_selinuxStatusLabel->setObjectName("metric");
+    m_selinuxStatusLabel->setWordWrap(true);
+    selinuxLayout->addWidget(m_selinuxStatusLabel);
+    auto *selinuxActions = new QHBoxLayout;
+    m_selinuxCheckButton = makeButton("Check status");
+    m_selinuxEnforcingButton = makeButton("Set Enforcing");
+    m_selinuxPermissiveButton = makeButton("Set Permissive", "danger");
+    selinuxActions->addWidget(m_selinuxCheckButton);
+    selinuxActions->addWidget(m_selinuxEnforcingButton);
+    selinuxActions->addWidget(m_selinuxPermissiveButton);
+    selinuxActions->addStretch();
+    selinuxLayout->addLayout(selinuxActions);
+    auto *selinuxNote = new QLabel(
+        "Changing SELinux mode requires working root access. DroidDesk verifies the reported mode after each request; a device policy may reject or override it.");
+    selinuxNote->setObjectName("muted");
+    selinuxNote->setWordWrap(true);
+    selinuxLayout->addWidget(selinuxNote);
+    selinuxLayout->addStretch();
+    rootTabs->addTab(selinuxPage, "SELinux");
 
     QVBoxLayout *storeLayout = nullptr;
     auto *storePage = makeSection("GitHub module catalog", storeLayout);
@@ -654,11 +872,89 @@ void MainWindow::buildUi()
     setCentralWidget(central);
     statusBar()->showMessage("Ready");
 
-    connect(refreshButton, &QPushButton::clicked, this, &MainWindow::refreshDevices);
+    const auto updateScrcpyOptions = [this, scrcpyModeInfo] {
+        const QString mode = m_scrcpyMode->currentData().toString();
+        const bool otg = mode == QStringLiteral("otg");
+        const bool virtualDisplay = mode == QStringLiteral("virtual");
+        m_scrcpyVirtualSize->setEnabled(virtualDisplay);
+        m_scrcpyFlexDisplay->setEnabled(virtualDisplay);
+        m_scrcpyMaxSize->setEnabled(!otg);
+        m_scrcpyMaxFps->setEnabled(!otg);
+        m_scrcpyAudio->setEnabled(!otg);
+        m_scrcpyStayAwake->setEnabled(!otg);
+        m_scrcpyTurnScreenOff->setEnabled(!otg);
+        m_scrcpyAlwaysOnTop->setEnabled(!otg);
+        m_scrcpyShowTouches->setEnabled(!otg);
+        m_scrcpyOtgGamepad->setEnabled(otg);
+        m_scrcpyRecording->setEnabled(!otg);
+        const bool recording = !otg && m_scrcpyRecording->isChecked();
+        m_scrcpyRecordingPath->setEnabled(recording);
+        m_scrcpyBrowseRecording->setEnabled(recording);
+        if (otg) {
+            scrcpyModeInfo->setText(
+                "OTG simulates a physical USB keyboard and mouse (and optional gamepad). It works over USB only, does not require USB debugging, and has no video, audio, virtual display, or recording.");
+        } else if (virtualDisplay) {
+            scrcpyModeInfo->setText(
+                "Virtual display creates a separate Android display and destroys it when scrcpy closes. Flex mode resizes the virtual display with its window; Android 10 or later is generally required.");
+        } else {
+            scrcpyModeInfo->setText(
+                "Mirror the selected device screen with audio and control. Recording captures the scrcpy stream to an MP4 or MKV file on this PC.");
+        }
+    };
+    connect(m_scrcpyMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [updateScrcpyOptions] { updateScrcpyOptions(); });
+    connect(m_scrcpyRecording, &QCheckBox::toggled, this,
+            [updateScrcpyOptions] { updateScrcpyOptions(); });
+    connect(m_scrcpyBrowseRecording, &QPushButton::clicked, this, [this] {
+        QString initialPath = m_scrcpyRecordingPath->text().trimmed();
+        if (initialPath.isEmpty())
+            initialPath = QDir(QStandardPaths::writableLocation(QStandardPaths::MoviesLocation))
+                              .filePath("DroidDesk-recording.mp4");
+        const QString path = QFileDialog::getSaveFileName(
+            this, "Save scrcpy recording", initialPath,
+            "MP4 video (*.mp4);;Matroska video (*.mkv)");
+        if (!path.isEmpty())
+            m_scrcpyRecordingPath->setText(path);
+    });
+    connect(m_scrcpyStartButton, &QPushButton::clicked, this, &MainWindow::launchScrcpy);
+    updateScrcpyOptions();
+
+    connect(refreshButton, &QPushButton::clicked, this, [this] { refreshDevices(); });
+    connect(clearModuleInstallLog, &QPushButton::clicked, m_moduleInstallLog,
+            &QPlainTextEdit::clear);
     connect(m_devices, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this] {
+        if (m_selinuxProcess) {
+            QProcess *process = m_selinuxProcess;
+            m_selinuxProcess = nullptr;
+            disconnect(process, nullptr, this, nullptr);
+            if (process->state() != QProcess::NotRunning)
+                process->kill();
+            process->deleteLater();
+            m_selinuxCheckButton->setEnabled(true);
+            m_selinuxEnforcingButton->setEnabled(true);
+            m_selinuxPermissiveButton->setEnabled(true);
+        }
+        m_selinuxStatusLabel->setText("SELinux status not checked for the selected device.");
+        if (m_rootCheckProcess) {
+            QProcess *process = m_rootCheckProcess;
+            m_rootCheckProcess = nullptr;
+            disconnect(process, nullptr, this, nullptr);
+            if (process->state() != QProcess::NotRunning)
+                process->kill();
+            process->deleteLater();
+        }
+        m_rootStatusLabel->setText("Root status not checked for the selected device.");
         if (m_logcatProcess && m_logcatProcess->state() != QProcess::NotRunning)
             stopLogcat();
         refreshDeviceDetails();
+        if (m_appListProcess) {
+            QProcess *process = m_appListProcess;
+            m_appListProcess = nullptr;
+            disconnect(process, nullptr, this, nullptr);
+            if (process->state() != QProcess::NotRunning)
+                process->kill();
+            process->deleteLater();
+        }
         m_appList->clear();
         m_magiskModules->clear();
         auto *modulePlaceholder = new QListWidgetItem("Refresh modules for the selected device.", m_magiskModules);
@@ -681,15 +977,11 @@ void MainWindow::buildUi()
         for (int i = 0; i < m_appList->count(); ++i)
             m_appList->item(i)->setHidden(!m_appList->item(i)->text().contains(filter, Qt::CaseInsensitive));
     });
-    connect(installApp, &QPushButton::clicked, this, [this] {
+    connect(m_installAppButton, &QPushButton::clicked, this, [this] {
         const QString path = QFileDialog::getOpenFileName(this, "Install Android package", {}, "Android packages (*.apk);;All files (*.*)");
         if (path.isEmpty())
             return;
-        const auto result = runDevice({"install", "-r", path}, 120000);
-        logCommand("Install APK", result);
-        showResult("APK installed successfully.", result);
-        if (result.exitCode == 0)
-            refreshApps();
+        installApk(path);
     });
 
     const auto selectedPackage = [this]() -> QString {
@@ -951,6 +1243,7 @@ void MainWindow::buildUi()
         m_rootShellInput->clear();
     });
     connect(m_rootShellInput, &QLineEdit::returnPressed, runRootShell, &QPushButton::click);
+    connect(checkRoot, &QPushButton::clicked, this, &MainWindow::checkRootStatus);
     connect(refreshModules, &QPushButton::clicked, this, &MainWindow::refreshMagiskModules);
     connect(installModule, &QPushButton::clicked, this, [this] {
         const QString path = QFileDialog::getOpenFileName(
@@ -962,8 +1255,19 @@ void MainWindow::buildUi()
     connect(disableModule, &QPushButton::clicked, this, [this] { setMagiskModuleEnabled(false); });
     connect(removeModule, &QPushButton::clicked, this, &MainWindow::removeMagiskModule);
     connect(refreshCatalog, &QPushButton::clicked, this, &MainWindow::loadModuleCatalog);
+    connect(m_selinuxCheckButton, &QPushButton::clicked, this, [this] {
+        runSelinuxCommand(false, true);
+    });
+    connect(m_selinuxEnforcingButton, &QPushButton::clicked, this, [this] {
+        runSelinuxCommand(true, true);
+    });
+    connect(m_selinuxPermissiveButton, &QPushButton::clicked, this, [this] {
+        runSelinuxCommand(true, false);
+    });
     connect(rootTabs, &QTabWidget::currentChanged, this, [this](int index) {
-        if (index == 1 && m_catalogEntries.isEmpty())
+        if (index == 1)
+            runSelinuxCommand(false, true);
+        else if (index == 2 && m_catalogEntries.isEmpty())
             loadModuleCatalog();
     });
     connect(m_moduleSearch, &QLineEdit::textChanged, this, &MainWindow::filterModuleCatalog);
@@ -1063,36 +1367,45 @@ void MainWindow::buildUi()
     });
 }
 
-void MainWindow::refreshDevices()
+void MainWindow::refreshDevices(bool periodic)
 {
     if (m_deviceScan && m_deviceScan->state() != QProcess::NotRunning)
         return;
 
     const QString previous = selectedSerial();
-    m_connectionLabel->setText("Searching for ADB devices…");
+    if (!periodic)
+        m_connectionLabel->setText("Searching for ADB devices…");
     auto *scan = new QProcess(this);
     m_deviceScan = scan;
     scan->setProgram(adbExecutable());
     scan->setArguments({"devices", "-l"});
     connect(scan, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
-            [this, scan, previous](int exitCode, QProcess::ExitStatus exitStatus) {
+            [this, scan, previous, periodic](int exitCode, QProcess::ExitStatus exitStatus) {
         const QByteArray output = scan->readAllStandardOutput();
         const QByteArray error = scan->readAllStandardError();
         const bool started = scan->error() != QProcess::FailedToStart;
-        logCommand("Refresh devices", {exitCode, output, error, started,
-                                       exitStatus == QProcess::CrashExit});
+        if (!periodic)
+            logCommand("Refresh devices", {exitCode, output, error, started,
+                                           exitStatus == QProcess::CrashExit});
         scan->deleteLater();
         if (m_deviceScan == scan)
             m_deviceScan = nullptr;
         if (!started) {
-            m_connectionLabel->setText("ADB not found — install Android SDK Platform-Tools or use ADB settings to select adb.exe.");
+            if (!periodic || !m_deviceSnapshotInitialized)
+                m_connectionLabel->setText("ADB not found — install Android SDK Platform-Tools or use ADB settings to select adb.exe.");
+            return;
+        }
+        if (exitCode != 0 || exitStatus != QProcess::NormalExit) {
+            if (!periodic || !m_deviceSnapshotInitialized)
+                m_connectionLabel->setText("ADB could not complete device discovery. Check the ADB log for details.");
+            if (periodic)
+                logCommand("Poll ADB device status", {exitCode, output, error, started, false});
             return;
         }
 
-        m_devices->blockSignals(true);
-        m_devices->clear();
-        bool any = false;
         int connectedCount = 0;
+        QMap<QString, QString> currentStates;
+        QVector<QStringList> deviceRows;
         const QString outputText = QString::fromLocal8Bit(output);
         for (const QString &line : outputText.split(QLatin1Char('\n'))) {
             const QString trimmed = line.trimmed();
@@ -1103,6 +1416,7 @@ void MainWindow::refreshDevices()
                 continue;
             const QString serial = parts.at(0);
             const QString state = parts.at(1);
+            currentStates.insert(serial, state);
             QString label = serial;
             const int modelAt = trimmed.indexOf("model:");
             if (modelAt >= 0) {
@@ -1110,32 +1424,91 @@ void MainWindow::refreshDevices()
                 label = model + "  ·  " + serial;
             }
             if (state == "device") {
+                ++connectedCount;
+            }
+            deviceRows.append({label, serial, state});
+        }
+        QStringList addedDevices;
+        QStringList changedDevices;
+        QStringList removedDevices;
+        if (m_deviceSnapshotInitialized) {
+            for (auto it = currentStates.cbegin(); it != currentStates.cend(); ++it) {
+                if (!m_deviceStates.contains(it.key())) {
+                    addedDevices.append(it.value() == QStringLiteral("device")
+                                            ? QStringLiteral("connected: ") + it.key()
+                                            : QStringLiteral("detected (%1): %2").arg(it.value(), it.key()));
+                } else if (m_deviceStates.value(it.key()) != it.value()) {
+                    changedDevices.append(QStringLiteral("%1 (%2 → %3)")
+                        .arg(it.key(), m_deviceStates.value(it.key()), it.value()));
+                }
+            }
+            for (auto it = m_deviceStates.cbegin(); it != m_deviceStates.cend(); ++it) {
+                if (!currentStates.contains(it.key()))
+                    removedDevices.append(it.key());
+            }
+        }
+        const bool deviceStateChanged = !addedDevices.isEmpty() ||
+                                        !changedDevices.isEmpty() ||
+                                        !removedDevices.isEmpty();
+        if (periodic && m_deviceSnapshotInitialized && !deviceStateChanged)
+            return;
+
+        m_deviceStates = currentStates;
+        m_deviceSnapshotInitialized = true;
+        m_devices->blockSignals(true);
+        m_devices->clear();
+        bool any = false;
+        for (const QStringList &row : deviceRows) {
+            const QString &label = row.at(0);
+            const QString &serial = row.at(1);
+            const QString &state = row.at(2);
+            if (state == QStringLiteral("device")) {
                 m_devices->addItem(label, serial);
                 any = true;
-                ++connectedCount;
             } else {
-                m_devices->addItem(label + "  (" + state + ")", QStringLiteral("__") + state);
+                m_devices->addItem(label + "  (" + state + ")",
+                                   QStringLiteral("__") + state + QLatin1Char(':') + serial);
             }
         }
         m_devices->insertItem(0, "Auto-select connected device", "auto");
-        if (any) {
-            m_devices->setCurrentIndex(0);
-        } else if (!previous.isEmpty()) {
+        bool previousSelected = false;
+        if (!previous.isEmpty()) {
             for (int i = 1; i < m_devices->count(); ++i) {
-                if (m_devices->itemData(i).toString() == previous)
+                if (m_devices->itemData(i).toString() == previous) {
                     m_devices->setCurrentIndex(i);
+                    previousSelected = true;
+                    break;
+                }
             }
+        }
+        if (!previousSelected) {
+            m_devices->setCurrentIndex(0);
         }
         m_devices->blockSignals(false);
 
-        if (exitCode != 0 || exitStatus != QProcess::NormalExit) {
-            m_connectionLabel->setText("ADB could not complete device discovery. Check the ADB log for details.");
-        } else if (!any) {
-            m_connectionLabel->setText("No authorized Android devices found. Connect a device with USB debugging enabled and accept its authorization prompt.");
+        if (!any) {
+            const int unavailableCount = currentStates.size();
+            m_connectionLabel->setText(unavailableCount == 0
+                ? QStringLiteral("No Android devices found. Connect a device with USB debugging enabled, or use USB OTG mode.")
+                : QStringLiteral("No authorized Android devices. %1 device(s) are offline or awaiting authorization.")
+                      .arg(unavailableCount));
         } else {
-            m_connectionLabel->setText(QString("Connected: %1 device(s) ready").arg(connectedCount));
+            m_connectionLabel->setText(QString("%1 device(s) connected and ready%2")
+                .arg(connectedCount)
+                .arg(deviceStateChanged ? QStringLiteral(" — device status updated")
+                                        : QString()));
         }
-        refreshDeviceDetails();
+        if (deviceStateChanged) {
+            for (const QString &device : addedDevices)
+                appendLog("ADB device " + device);
+            for (const QString &device : changedDevices)
+                appendLog("ADB device state changed: " + device);
+            for (const QString &device : removedDevices)
+                appendLog("ADB device disconnected: " + device);
+            statusBar()->showMessage("ADB device connection status changed.", 5000);
+        }
+        if (!periodic || previous != selectedSerial())
+            refreshDeviceDetails();
     });
     connect(scan, &QProcess::errorOccurred, this, [this, scan](QProcess::ProcessError error) {
         if (error != QProcess::FailedToStart)
@@ -1261,34 +1634,401 @@ void MainWindow::refreshDeviceDetails()
 
 void MainWindow::refreshApps()
 {
+    if (m_appListProcess) {
+        statusBar()->showMessage("The app list is already loading.", 3000);
+        return;
+    }
     if (selectedSerial().isEmpty()) {
         QMessageBox::information(this, "Apps", "Connect and select an authorized device first.");
         return;
     }
-    m_appList->clear();
+    const QString serial = selectedSerial();
     const bool includeSystem = m_systemApps->currentIndex() == 1;
-    QStringList args{"shell", "pm", "list", "packages"};
+    QStringList args{"-s", serial, "shell", "pm", "list", "packages"};
     if (!includeSystem)
         args << "-3";
-    const auto result = runDevice(args, 60000);
-    logCommand(includeSystem ? "List all packages" : "List user apps", result);
-    if (!result.started || result.timedOut || result.exitCode != 0) {
-        showResult({}, result);
+
+    auto *process = new QProcess(this);
+    m_appListProcess = process;
+    process->setProgram(adbExecutable());
+    process->setArguments(args);
+    m_appList->clear();
+    m_appList->addItem("Loading apps…");
+    m_appList->item(0)->setFlags(Qt::NoItemFlags);
+    auto *timeout = new QTimer(process);
+    timeout->setSingleShot(true);
+    connect(timeout, &QTimer::timeout, process, [process] {
+        if (process->state() != QProcess::NotRunning) {
+            process->setProperty("timedOut", true);
+            process->kill();
+        }
+    });
+    timeout->start(60000);
+    connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this, process, timeout, serial, includeSystem](int exitCode, QProcess::ExitStatus exitStatus) {
+        timeout->stop();
+        const QByteArray output = process->readAllStandardOutput();
+        const QByteArray error = process->readAllStandardError();
+        const bool started = process->error() != QProcess::FailedToStart;
+        const bool timedOut = process->property("timedOut").toBool();
+        if (m_appListProcess != process)
+            return;
+        m_appListProcess = nullptr;
+        process->deleteLater();
+
+        if (serial != selectedSerial())
+            return;
+        const CommandResult result{exitCode, output, error, started, timedOut};
+        logCommand(includeSystem ? "List all packages" : "List user apps", result);
+        if (isDeviceDisconnected(result)) {
+            m_appList->clear();
+            m_appList->addItem("Device disconnected while loading apps.");
+            m_appList->item(0)->setFlags(Qt::NoItemFlags);
+            handleDeviceDisconnected(result);
+            return;
+        }
+        if (!started || timedOut || exitStatus != QProcess::NormalExit || exitCode != 0) {
+            m_appList->clear();
+            auto *item = new QListWidgetItem(
+                timedOut ? "Loading apps timed out." : "Could not load apps. See the ADB log for details.",
+                m_appList);
+            item->setFlags(Qt::NoItemFlags);
+            showResult({}, result);
+            return;
+        }
+        m_appList->clear();
+        const QString outputText = QString::fromLocal8Bit(output);
+        for (QString line : outputText.split(QLatin1Char('\n'))) {
+            line = line.trimmed();
+            if (line.startsWith("package:"))
+                line = line.mid(8);
+            if (!line.isEmpty())
+                m_appList->addItem(line);
+        }
+        if (m_appList->count() == 0) {
+            auto *emptyItem = new QListWidgetItem("(No packages found)", m_appList);
+            emptyItem->setFlags(Qt::NoItemFlags);
+        }
+        appendLog(QString("Found %1 packages").arg(m_appList->count()));
+    });
+    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart || m_appListProcess != process)
+            return;
+        m_appListProcess = nullptr;
+        const QString errorText = process->errorString();
+        process->deleteLater();
+        m_appList->clear();
+        m_appList->addItem("Could not start ADB.");
+        m_appList->item(0)->setFlags(Qt::NoItemFlags);
+        showResult({}, {-1, {}, errorText.toUtf8(), false, false});
+    });
+    process->start();
+}
+
+void MainWindow::installApk(const QString &path)
+{
+    if (m_appInstallProcess) {
+        statusBar()->showMessage("An APK installation is already running.", 4000);
         return;
     }
-    const QString output = QString::fromLocal8Bit(result.output);
-    for (QString line : output.split(QLatin1Char('\n'))) {
-        line = line.trimmed();
-        if (line.startsWith("package:"))
-            line = line.mid(8);
-        if (!line.isEmpty())
-            m_appList->addItem(line);
+    const QFileInfo apk(path);
+    if (!apk.isFile() || apk.suffix().compare("apk", Qt::CaseInsensitive) != 0) {
+        QMessageBox::warning(this, "Install APK", "Choose a valid .apk file.");
+        return;
     }
-    if (m_appList->count() == 0) {
-        auto *emptyItem = new QListWidgetItem("(No packages found)", m_appList);
-        emptyItem->setFlags(Qt::NoItemFlags);
+    const QString serial = selectedSerial();
+    if (serial.isEmpty()) {
+        QMessageBox::information(this, "Install APK", "Connect and select an authorized device first.");
+        return;
     }
-    appendLog(QString("Found %1 packages").arg(m_appList->count()));
+
+    auto *process = new QProcess(this);
+    m_appInstallProcess = process;
+    process->setProgram(adbExecutable());
+    process->setArguments({"-s", serial, "install", "-r", path});
+    m_installAppButton->setEnabled(false);
+    m_appInstallStatus->setText(QString("Installing %1 on %2…").arg(apk.fileName(), serial));
+    m_appInstallStatus->setVisible(true);
+    m_appInstallProgress->setVisible(true);
+
+    auto *timeout = new QTimer(process);
+    timeout->setSingleShot(true);
+    connect(timeout, &QTimer::timeout, process, [process] {
+        if (process->state() != QProcess::NotRunning) {
+            process->setProperty("timedOut", true);
+            process->kill();
+        }
+    });
+    timeout->start(10 * 60 * 1000);
+
+    const auto updateInstallOutput = [this, process] {
+        QByteArray newOutput = process->readAllStandardOutput();
+        newOutput += process->readAllStandardError();
+        if (newOutput.isEmpty())
+            return;
+        QByteArray accumulated = process->property("installOutput").toByteArray();
+        accumulated += newOutput;
+        constexpr int maxOutputBytes = 64 * 1024;
+        if (accumulated.size() > maxOutputBytes)
+            accumulated = accumulated.right(maxOutputBytes);
+        process->setProperty("installOutput", accumulated);
+        const QStringList lines = QString::fromLocal8Bit(newOutput).split(
+            QRegularExpression("[\\r\\n]+"), QString::SkipEmptyParts);
+        if (!lines.isEmpty()) {
+            m_appInstallStatus->setText(
+                QString("Installing %1: %2").arg(QFileInfo(process->arguments().last()).fileName(),
+                                                  lines.last().trimmed()));
+        }
+    };
+    connect(process, &QProcess::readyReadStandardOutput, this, updateInstallOutput);
+    connect(process, &QProcess::readyReadStandardError, this, updateInstallOutput);
+    connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this, process, timeout, serial, fileName = apk.fileName(), updateInstallOutput]
+            (int exitCode, QProcess::ExitStatus exitStatus) {
+        timeout->stop();
+        updateInstallOutput();
+        const QByteArray output = process->property("installOutput").toByteArray();
+        const bool started = process->error() != QProcess::FailedToStart;
+        const bool timedOut = process->property("timedOut").toBool();
+        if (m_appInstallProcess != process)
+            return;
+        m_appInstallProcess = nullptr;
+        process->deleteLater();
+        m_installAppButton->setEnabled(true);
+        m_appInstallProgress->setVisible(false);
+        m_appInstallStatus->setVisible(true);
+
+        const CommandResult result{exitCode, output, {}, started, timedOut};
+        logCommand("Install APK " + fileName, result);
+        if (isDeviceDisconnected(result)) {
+            m_appInstallStatus->setText("Installation stopped: device disconnected.");
+            handleDeviceDisconnected(result);
+            return;
+        }
+        if (!started || timedOut || exitStatus != QProcess::NormalExit || exitCode != 0) {
+            const QString details = QString::fromLocal8Bit(output).trimmed();
+            const QString reason = timedOut ? "Installation timed out after 10 minutes." :
+                !started ? "ADB could not be started." :
+                details.isEmpty() ? "ADB could not install the APK." : details;
+            m_appInstallStatus->setText("Install failed: " + reason.left(300));
+            QMessageBox::warning(this, "Install APK", reason +
+                (details.isEmpty() ? QString() : QStringLiteral("\n\n") + details));
+            return;
+        }
+        m_appInstallStatus->setText(fileName + " installed successfully.");
+        statusBar()->showMessage(fileName + " installed successfully.", 6000);
+        if (serial == selectedSerial())
+            refreshApps();
+    });
+    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart || m_appInstallProcess != process)
+            return;
+        m_appInstallProcess = nullptr;
+        m_installAppButton->setEnabled(true);
+        m_appInstallProgress->setVisible(false);
+        m_appInstallStatus->setText("Could not start ADB: " + process->errorString());
+        QMessageBox::warning(this, "Install APK", "Could not start ADB:\n" + process->errorString());
+        process->deleteLater();
+    });
+    statusBar()->showMessage("Installing APK on the selected device…");
+    process->start();
+}
+
+void MainWindow::launchScrcpy()
+{
+    if (m_scrcpyProcess) {
+        m_scrcpyStartButton->setEnabled(false);
+        m_scrcpyStartButton->setText("Stopping scrcpy…");
+        m_scrcpyStatusLabel->setText("Stopping scrcpy…");
+        statusBar()->showMessage("Closing scrcpy…");
+        QProcess *process = m_scrcpyProcess;
+        process->terminate();
+        QTimer::singleShot(2000, process, [process] {
+            if (process->state() != QProcess::NotRunning)
+                process->kill();
+        });
+        return;
+    }
+
+    const QString mode = m_scrcpyMode->currentData().toString();
+    const bool otg = mode == QStringLiteral("otg");
+    const bool virtualDisplay = mode == QStringLiteral("virtual");
+    const QString serial = selectedSerial();
+    if (!otg && serial.isEmpty()) {
+        QMessageBox::information(this, "Screen mirror", "Connect and select an authorized Android device first.");
+        return;
+    }
+    if (otg && m_scrcpyRecording->isChecked()) {
+        QMessageBox::information(this, "OTG mode", "scrcpy OTG mode has no video or audio stream, so recording is unavailable. Turn off Record session or choose a different mode.");
+        return;
+    }
+    if (virtualDisplay) {
+        static const QRegularExpression resolutionPattern(QStringLiteral("^([0-9]{3,4})x([0-9]{3,4})$"));
+        const auto match = resolutionPattern.match(m_scrcpyVirtualSize->text().trimmed());
+        bool widthOk = false;
+        bool heightOk = false;
+        const int width = match.hasMatch() ? match.captured(1).toInt(&widthOk) : 0;
+        const int height = match.hasMatch() ? match.captured(2).toInt(&heightOk) : 0;
+        if (!widthOk || !heightOk || width < 320 || height < 320 ||
+            width > 8192 || height > 8192) {
+            QMessageBox::warning(this, "Virtual display",
+                                 "Enter a virtual display size between 320 and 8192 pixels per side, such as 1280x720.");
+            return;
+        }
+    }
+    if (otg && !serial.isEmpty() && serial.contains(QLatin1Char(':'))) {
+        QMessageBox::information(this, "OTG mode",
+                                 "OTG works over a direct USB connection, not an ADB-over-Wi-Fi device. Select the USB device or disconnect its Wi-Fi ADB connection.");
+        return;
+    }
+    const QString executable = scrcpyExecutable();
+    if (executable.isEmpty()) {
+        const QString expectedPath = QDir(QCoreApplication::applicationDirPath())
+                                         .filePath("scrcpy/scrcpy.exe");
+        QMessageBox::warning(
+            this, "scrcpy not found",
+            QString("The bundled scrcpy executable was not found.\n\nExpected it at:\n%1\n\n"
+                    "Extract the official Windows release into the scrcpy folder next to DroidDesk.")
+                .arg(expectedPath));
+        return;
+    }
+
+    auto *process = new QProcess(this);
+    m_scrcpyProcess = process;
+    process->setProgram(executable);
+    QStringList arguments;
+    if (!serial.isEmpty())
+        arguments << "-s" << serial;
+    if (otg) {
+        arguments << "--otg";
+        if (m_scrcpyOtgGamepad->isChecked())
+            arguments << "--gamepad=aoa";
+    } else {
+        arguments << "--window-title"
+                  << QString("DroidDesk - %1").arg(serial);
+        if (virtualDisplay) {
+            arguments << "--new-display=" + m_scrcpyVirtualSize->text().trimmed();
+            if (m_scrcpyFlexDisplay->isChecked())
+                arguments << "--flex-display";
+        }
+        const QString maxSize = m_scrcpyMaxSize->currentData().toString();
+        if (!maxSize.isEmpty())
+            arguments << "--max-size=" + maxSize;
+        const QString maxFps = m_scrcpyMaxFps->currentData().toString();
+        if (!maxFps.isEmpty())
+            arguments << "--max-fps=" + maxFps;
+        if (!m_scrcpyAudio->isChecked())
+            arguments << "--no-audio";
+        if (m_scrcpyStayAwake->isChecked())
+            arguments << "--stay-awake";
+        if (m_scrcpyTurnScreenOff->isChecked())
+            arguments << "--turn-screen-off";
+        if (m_scrcpyAlwaysOnTop->isChecked())
+            arguments << "--always-on-top";
+        if (m_scrcpyShowTouches->isChecked())
+            arguments << "--show-touches";
+        if (m_scrcpyRecording->isChecked()) {
+            QString recordingPath = m_scrcpyRecordingPath->text().trimmed();
+            if (recordingPath.isEmpty())
+                recordingPath = QDir(QStandardPaths::writableLocation(QStandardPaths::MoviesLocation))
+                                    .filePath("DroidDesk-recording.mp4");
+            recordingPath = QFileDialog::getSaveFileName(
+                this, "Save scrcpy recording", recordingPath,
+                "MP4 video (*.mp4);;Matroska video (*.mkv)");
+            if (recordingPath.isEmpty()) {
+                m_scrcpyProcess = nullptr;
+                process->deleteLater();
+                return;
+            }
+            const QString extension = QFileInfo(recordingPath).suffix().toLower();
+            if (extension != QStringLiteral("mp4") && extension != QStringLiteral("mkv")) {
+                m_scrcpyProcess = nullptr;
+                process->deleteLater();
+                QMessageBox::warning(this, "Scrcpy recording",
+                                     "Choose an MP4 (.mp4) or Matroska (.mkv) recording file.");
+                return;
+            }
+            m_scrcpyRecordingPath->setText(recordingPath);
+            arguments << "--record=" + QFileInfo(recordingPath).absoluteFilePath();
+        }
+    }
+    process->setArguments(arguments);
+    process->setWorkingDirectory(QFileInfo(executable).absolutePath());
+    process->setProcessChannelMode(QProcess::MergedChannels);
+    m_scrcpyStartButton->setText("Stop scrcpy");
+    m_scrcpyStartButton->setEnabled(true);
+    const QString targetLabel = serial.isEmpty() ? QStringLiteral("USB device")
+                                                  : serial;
+    m_scrcpyStatusLabel->setText("Starting " + (otg ? QStringLiteral("OTG control") :
+        virtualDisplay ? QStringLiteral("virtual display") : QStringLiteral("screen mirror")) +
+        " for " + targetLabel + "…");
+    statusBar()->showMessage("Starting scrcpy for " + targetLabel + "…");
+    const auto captureOutput = [process] {
+        QByteArray output = process->property("scrcpyOutput").toByteArray();
+        output += process->readAll();
+        constexpr int maxOutputBytes = 32 * 1024;
+        if (output.size() > maxOutputBytes)
+            output = output.right(maxOutputBytes);
+        process->setProperty("scrcpyOutput", output);
+    };
+    connect(process, &QProcess::readyRead, this, captureOutput);
+
+    connect(process, &QProcess::started, this, [this, serial, process, otg, virtualDisplay] {
+        if (m_scrcpyProcess != process)
+            return;
+        const QString modeName = otg ? QStringLiteral("OTG control") :
+            virtualDisplay ? QStringLiteral("Virtual display") : QStringLiteral("Screen mirror");
+        m_scrcpyStatusLabel->setText(modeName + " is running for " +
+                                     (serial.isEmpty() ? QStringLiteral("the USB device") : serial) +
+                                     ". Close scrcpy or choose Stop scrcpy.");
+        statusBar()->showMessage(modeName + " started.", 8000);
+    });
+    connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this, process, serial, captureOutput](int exitCode, QProcess::ExitStatus exitStatus) {
+        captureOutput();
+        const QByteArray output = process->property("scrcpyOutput").toByteArray();
+        const bool started = process->error() != QProcess::FailedToStart;
+        if (m_scrcpyProcess != process)
+            return;
+        m_scrcpyProcess = nullptr;
+        process->deleteLater();
+        m_scrcpyStartButton->setText("Start scrcpy");
+        m_scrcpyStartButton->setEnabled(true);
+        const CommandResult result{exitCode, output, {}, started, false};
+        logCommand("scrcpy screen mirror", result);
+        if (isDeviceDisconnected(result)) {
+            m_scrcpyStatusLabel->setText("scrcpy closed because the Android device disconnected.");
+            statusBar()->showMessage("scrcpy closed because the Android device disconnected.", 8000);
+            handleDeviceDisconnected(result);
+            return;
+        }
+        if (exitStatus != QProcess::NormalExit || exitCode != 0) {
+            const QString details = QString::fromLocal8Bit(output).trimmed();
+            const QString reason = details.isEmpty()
+                ? QStringLiteral("scrcpy exited with code %1. Check USB debugging and device authorization.").arg(exitCode)
+                : details.left(1000);
+            m_scrcpyStatusLabel->setText("scrcpy exited with an error. See the ADB log for details.");
+            statusBar()->showMessage("scrcpy failed to start or stopped with an error.", 8000);
+            QMessageBox::warning(this, "scrcpy", reason);
+            return;
+        }
+        m_scrcpyStatusLabel->setText("scrcpy stopped.");
+        statusBar()->showMessage("scrcpy closed for " +
+                                 (serial.isEmpty() ? QStringLiteral("the USB device") : serial) + ".", 5000);
+    });
+    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart || m_scrcpyProcess != process)
+            return;
+        m_scrcpyProcess = nullptr;
+        const QString errorText = process->errorString();
+        process->deleteLater();
+        m_scrcpyStartButton->setText("Start scrcpy");
+        m_scrcpyStartButton->setEnabled(true);
+        m_scrcpyStatusLabel->setText("Could not start scrcpy.");
+        statusBar()->showMessage("Could not start scrcpy.", 6000);
+        QMessageBox::warning(this, "scrcpy", "Could not start scrcpy:\n" + errorText);
+    });
+    process->start();
 }
 
 void MainWindow::executeShellCommand()
@@ -1746,6 +2486,253 @@ void MainWindow::filterModuleCatalog(const QString &text)
     }
 }
 
+void MainWindow::checkRootStatus()
+{
+    if (m_rootCheckProcess) {
+        statusBar()->showMessage("A root check is already in progress.", 3000);
+        return;
+    }
+    const QString serial = selectedSerial();
+    if (serial.isEmpty()) {
+        m_rootStatusLabel->setText("Connect and select an authorized device before checking root.");
+        return;
+    }
+
+    const QString script = QStringLiteral(
+        "uid=$(id -u 2>/dev/null) || exit 1; "
+        "printf 'DROIDDESK_UID=%s\\n' \"$uid\"; "
+        "version=$(magisk -v 2>/dev/null); "
+        "if [ -n \"$version\" ]; then printf 'DROIDDESK_MAGISK_VERSION=%s\\n' \"$version\"; "
+        "elif [ -d /data/adb/modules ] || [ -e /data/adb/magisk.db ]; then "
+        "printf 'DROIDDESK_MAGISK_PRESENT=1\\n'; "
+        "else printf 'DROIDDESK_MAGISK_PRESENT=0\\n'; fi");
+    auto *process = new QProcess(this);
+    m_rootCheckProcess = process;
+    process->setProgram(adbExecutable());
+    process->setArguments({"-s", serial, "shell", "su", "-c", shellQuote(script)});
+    process->setProcessChannelMode(QProcess::SeparateChannels);
+    auto *timeout = new QTimer(process);
+    timeout->setSingleShot(true);
+    connect(timeout, &QTimer::timeout, process, [process] {
+        if (process->state() != QProcess::NotRunning) {
+            process->setProperty("timedOut", true);
+            process->kill();
+        }
+    });
+    timeout->start(30000);
+    m_rootStatusLabel->setText("Checking root access… Approve the superuser request on your device if prompted.");
+
+    connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this, process, timeout, serial](int exitCode, QProcess::ExitStatus exitStatus) {
+        timeout->stop();
+        const QByteArray output = process->readAllStandardOutput();
+        const QByteArray error = process->readAllStandardError();
+        const bool started = process->error() != QProcess::FailedToStart;
+        const bool timedOut = process->property("timedOut").toBool();
+        if (m_rootCheckProcess != process)
+            return;
+        m_rootCheckProcess = nullptr;
+        process->deleteLater();
+
+        if (serial != selectedSerial()) {
+            m_rootStatusLabel->setText("Root check discarded because the selected device changed.");
+            return;
+        }
+        const CommandResult result{exitCode, output, error, started, timedOut};
+        logCommand("Check root access", result);
+        if (isDeviceDisconnected(result)) {
+            m_rootStatusLabel->setText("Device disconnected during the root check.");
+            handleDeviceDisconnected(result);
+            return;
+        }
+        if (timedOut) {
+            m_rootStatusLabel->setText(
+                "Root check timed out. Approve or deny the superuser request on the device, then try again.");
+            return;
+        }
+        if (!started) {
+            m_rootStatusLabel->setText("Could not start ADB: " + QString::fromLocal8Bit(error).trimmed());
+            return;
+        }
+
+        QString uid;
+        QString magiskVersion;
+        bool magiskPresent = false;
+        const QString outputText = QString::fromLocal8Bit(output);
+        for (const QString &line : outputText.split(QLatin1Char('\n'))) {
+            const QString trimmedLine = line.trimmed();
+            if (trimmedLine.startsWith(QStringLiteral("DROIDDESK_UID=")))
+                uid = trimmedLine.mid(QStringLiteral("DROIDDESK_UID=").size());
+            else if (trimmedLine.startsWith(QStringLiteral("DROIDDESK_MAGISK_VERSION="))) {
+                magiskVersion = trimmedLine.mid(QStringLiteral("DROIDDESK_MAGISK_VERSION=").size());
+                magiskPresent = !magiskVersion.isEmpty();
+            } else if (trimmedLine == QStringLiteral("DROIDDESK_MAGISK_PRESENT=1")) {
+                magiskPresent = true;
+            }
+        }
+
+        if (uid != QStringLiteral("0")) {
+            QString details = QString::fromLocal8Bit(error.isEmpty() ? output : error).trimmed();
+            if (details.isEmpty())
+                details = QStringLiteral("su did not return a root user ID. It may be unavailable or its request was denied.");
+            m_rootStatusLabel->setText("Root access unavailable: " + details.left(500));
+            return;
+        }
+
+        QString status = QStringLiteral("Root access granted (UID 0). ");
+        if (!magiskVersion.isEmpty())
+            status += QStringLiteral("Magisk detected: ") + magiskVersion;
+        else if (magiskPresent)
+            status += QStringLiteral("Magisk files detected; version could not be read.");
+        else
+            status += QStringLiteral("Magisk was not detected.");
+        m_rootStatusLabel->setText(status);
+        m_rootStatusLabel->setToolTip(status);
+        statusBar()->showMessage(status, 8000);
+        return;
+    });
+    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart)
+            return;
+        if (m_rootCheckProcess != process)
+            return;
+        m_rootCheckProcess = nullptr;
+        m_rootStatusLabel->setText("Could not start ADB: " + process->errorString());
+        process->deleteLater();
+    });
+    process->start();
+}
+
+void MainWindow::runSelinuxCommand(bool changeMode, bool enforcing)
+{
+    if (m_selinuxProcess) {
+        statusBar()->showMessage("A SELinux check or change is already running.", 3000);
+        return;
+    }
+    const QString serial = selectedSerial();
+    if (serial.isEmpty()) {
+        m_selinuxStatusLabel->setText("Connect and select an authorized device first.");
+        return;
+    }
+    if (changeMode) {
+        const QString targetMode = enforcing ? QStringLiteral("Enforcing")
+                                             : QStringLiteral("Permissive");
+        const QString message = enforcing
+            ? QStringLiteral("Set SELinux to Enforcing on %1? This can restrict modifications made by root tools or modules.")
+                  .arg(serial)
+            : QStringLiteral("Set SELinux to Permissive on %1?\n\n"
+                             "This weakens Android's security enforcement and can expose the device to increased risk. "
+                             "Only continue if you understand why this is needed.")
+                  .arg(serial);
+        const QMessageBox::StandardButton answer = enforcing
+            ? QMessageBox::question(this, "Change SELinux mode", message,
+                                    QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel)
+            : QMessageBox::warning(this, "Security warning: SELinux Permissive", message,
+                                   QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (answer != QMessageBox::Yes)
+            return;
+        m_selinuxStatusLabel->setText("Requesting SELinux " + targetMode + " mode…");
+    } else {
+        m_selinuxStatusLabel->setText("Checking SELinux status… Approve the superuser request if prompted.");
+    }
+
+    const QString script = changeMode
+        ? QStringLiteral("setenforce %1 && getenforce").arg(enforcing ? 1 : 0)
+        : QStringLiteral("getenforce");
+    auto *process = new QProcess(this);
+    m_selinuxProcess = process;
+    process->setProgram(adbExecutable());
+    process->setArguments({"-s", serial, "shell", "su", "-c", shellQuote(script)});
+    process->setProcessChannelMode(QProcess::SeparateChannels);
+    m_selinuxCheckButton->setEnabled(false);
+    m_selinuxEnforcingButton->setEnabled(false);
+    m_selinuxPermissiveButton->setEnabled(false);
+    auto *timeout = new QTimer(process);
+    timeout->setSingleShot(true);
+    connect(timeout, &QTimer::timeout, process, [process] {
+        if (process->state() != QProcess::NotRunning) {
+            process->setProperty("timedOut", true);
+            process->kill();
+        }
+    });
+    timeout->start(30000);
+    connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this, process, timeout, serial, changeMode, enforcing]
+            (int exitCode, QProcess::ExitStatus exitStatus) {
+        timeout->stop();
+        const QByteArray output = process->readAllStandardOutput();
+        const QByteArray error = process->readAllStandardError();
+        const bool started = process->error() != QProcess::FailedToStart;
+        const bool timedOut = process->property("timedOut").toBool();
+        if (m_selinuxProcess != process)
+            return;
+        m_selinuxProcess = nullptr;
+        process->deleteLater();
+        m_selinuxCheckButton->setEnabled(true);
+        m_selinuxEnforcingButton->setEnabled(true);
+        m_selinuxPermissiveButton->setEnabled(true);
+
+        if (serial != selectedSerial()) {
+            m_selinuxStatusLabel->setText("SELinux result discarded because the selected device changed.");
+            return;
+        }
+        const CommandResult result{exitCode, output, error, started, timedOut};
+        logCommand(changeMode ? "Change SELinux mode" : "Check SELinux status", result);
+        if (isDeviceDisconnected(result)) {
+            m_selinuxStatusLabel->setText("Device disconnected during the SELinux operation.");
+            handleDeviceDisconnected(result);
+            return;
+        }
+        if (timedOut) {
+            m_selinuxStatusLabel->setText(
+                "SELinux operation timed out. Approve the superuser request on the device, then try again.");
+            return;
+        }
+        if (!started || exitStatus != QProcess::NormalExit || exitCode != 0) {
+            const QString details = QString::fromLocal8Bit(error.isEmpty() ? output : error).trimmed();
+            m_selinuxStatusLabel->setText(
+                (changeMode ? "Could not change SELinux mode: " : "Could not read SELinux status: ") +
+                (details.isEmpty() ? QStringLiteral("root access may be unavailable or Android may have denied the operation.")
+                                   : details.left(400)));
+            return;
+        }
+
+        QString reportedMode;
+        const QString outputText = QString::fromLocal8Bit(output);
+        for (const QString &line : outputText.split(QRegularExpression("[\\r\\n]+"), QString::SkipEmptyParts)) {
+            const QString mode = line.trimmed();
+            if (mode.compare(QStringLiteral("Enforcing"), Qt::CaseInsensitive) == 0 ||
+                mode.compare(QStringLiteral("Permissive"), Qt::CaseInsensitive) == 0) {
+                reportedMode = mode;
+            }
+        }
+        if (reportedMode.isEmpty()) {
+            m_selinuxStatusLabel->setText(
+                "SELinux status was not recognized. Device output: " + outputText.trimmed().left(400));
+            return;
+        }
+        const QString actualMode = reportedMode.compare(QStringLiteral("Enforcing"), Qt::CaseInsensitive) == 0
+            ? QStringLiteral("Enforcing") : QStringLiteral("Permissive");
+        m_selinuxStatusLabel->setText(
+            (changeMode && (enforcing != (actualMode == QStringLiteral("Enforcing")))
+                 ? QStringLiteral("Device did not apply the requested mode. Current mode: ")
+                 : QStringLiteral("Current SELinux mode: ")) +
+            actualMode);
+        statusBar()->showMessage("SELinux mode: " + actualMode, 6000);
+    });
+    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart || m_selinuxProcess != process)
+            return;
+        m_selinuxProcess = nullptr;
+        m_selinuxCheckButton->setEnabled(true);
+        m_selinuxEnforcingButton->setEnabled(true);
+        m_selinuxPermissiveButton->setEnabled(true);
+        m_selinuxStatusLabel->setText("Could not start ADB: " + process->errorString());
+        process->deleteLater();
+    });
+    process->start();
+}
+
 void MainWindow::refreshMagiskModules()
 {
     if (selectedSerial().isEmpty()) {
@@ -2017,6 +3004,67 @@ void MainWindow::installMagiskModule(const QString &path)
     process->setProgram(adbExecutable());
     process->setArguments({"-s", serial, "push", path, remotePath});
     process->setProcessChannelMode(QProcess::MergedChannels);
+    process->setProperty("installPhase", "Copying module ZIP");
+    process->setProperty("installOutput", QByteArray());
+    process->setProperty("installLineBuffer", QByteArray());
+    m_moduleInstallLog->clear();
+    m_moduleInstallProgress->setVisible(true);
+    m_moduleInstallStatus->setText("Copying " + module.fileName() + " to the device…");
+    m_moduleInstallLog->appendPlainText(
+        QString("[%1] Starting installation of %2 on %3.")
+            .arg(QDateTime::currentDateTime().toString("HH:mm:ss"), module.fileName(), serial));
+    appendLog("Magisk module installation started: " + module.fileName() + " on " + serial);
+
+    const auto captureOutput = [this, process](bool flushPartialLine = false) {
+        QByteArray chunk = process->readAllStandardOutput();
+        if (!chunk.isEmpty()) {
+            QByteArray output = process->property("installOutput").toByteArray();
+            output += chunk;
+            constexpr int maxOutputBytes = 128 * 1024;
+            if (output.size() > maxOutputBytes)
+                output = output.right(maxOutputBytes);
+            process->setProperty("installOutput", output);
+        }
+
+        QByteArray lineBuffer = process->property("installLineBuffer").toByteArray();
+        lineBuffer += chunk;
+        QStringList lines = QString::fromLocal8Bit(lineBuffer).split(
+            QRegularExpression("[\\r\\n]+"), QString::KeepEmptyParts);
+        const bool endsWithDelimiter =
+            lineBuffer.endsWith('\n') || lineBuffer.endsWith('\r');
+        if (!flushPartialLine && !endsWithDelimiter && !lines.isEmpty()) {
+            lineBuffer = lines.takeLast().toLocal8Bit();
+        } else {
+            lineBuffer.clear();
+        }
+        process->setProperty("installLineBuffer", lineBuffer);
+        for (const QString &line : lines) {
+            const QString trimmed = line.trimmed();
+            if (trimmed.isEmpty())
+                continue;
+            const QString phase = process->property("installPhase").toString();
+            m_moduleInstallStatus->setText(phase + ": " + trimmed.left(220));
+            m_moduleInstallLog->appendPlainText(
+                QString("[%1] %2")
+                    .arg(QDateTime::currentDateTime().toString("HH:mm:ss"), trimmed));
+            appendLog("Magisk module [" + phase + "]: " + trimmed);
+        }
+        if (flushPartialLine && !lineBuffer.isEmpty()) {
+            const QString finalLine = QString::fromLocal8Bit(lineBuffer).trimmed();
+            if (!finalLine.isEmpty()) {
+                const QString phase = process->property("installPhase").toString();
+                m_moduleInstallStatus->setText(phase + ": " + finalLine.left(220));
+                m_moduleInstallLog->appendPlainText(
+                    QString("[%1] %2")
+                        .arg(QDateTime::currentDateTime().toString("HH:mm:ss"), finalLine));
+                appendLog("Magisk module [" + phase + "]: " + finalLine);
+            }
+            process->setProperty("installLineBuffer", QByteArray());
+        }
+    };
+    connect(process, &QProcess::readyReadStandardOutput, this,
+            [captureOutput] { captureOutput(); });
+
     auto *timeout = new QTimer(process);
     timeout->setSingleShot(true);
     connect(timeout, &QTimer::timeout, process, [process] {
@@ -2027,8 +3075,10 @@ void MainWindow::installMagiskModule(const QString &path)
     });
     timeout->start(5 * 60 * 1000);
     connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
-            [this, process, serial, remotePath, timeout](int exitCode, QProcess::ExitStatus exitStatus) {
-        const QByteArray output = process->readAll();
+            [this, process, serial, remotePath, timeout, captureOutput, moduleName = module.fileName()]
+            (int exitCode, QProcess::ExitStatus exitStatus) {
+        captureOutput(true);
+        const QByteArray output = process->property("installOutput").toByteArray();
         const bool started = process->error() != QProcess::FailedToStart;
         const bool timedOut = process->property("timedOut").toBool();
         if (m_moduleInstallProcess != process)
@@ -2039,17 +3089,28 @@ void MainWindow::installMagiskModule(const QString &path)
             logCommand(pushFinished ? "Run Magisk module installer" : "Copy Magisk module", result);
             m_moduleInstallProcess = nullptr;
             process->deleteLater();
+            m_moduleInstallProgress->setVisible(false);
             if (isDeviceDisconnected(result)) {
+                m_moduleInstallStatus->setText("Installation interrupted: device disconnected.");
+                m_moduleInstallLog->appendPlainText(
+                    "[" + QDateTime::currentDateTime().toString("HH:mm:ss") +
+                    "] Installation interrupted: device disconnected.");
                 handleDeviceDisconnected(result);
                 return;
             }
+            const QString details = QString::fromLocal8Bit(output).trimmed();
+            const QString reason = timedOut ? QStringLiteral("The operation timed out.") :
+                !started ? QStringLiteral("ADB could not be started.") :
+                pushFinished ? QStringLiteral("Magisk could not install the module. Check that Magisk and root access are available.") :
+                QStringLiteral("Could not copy the module to the device.");
+            m_moduleInstallStatus->setText("Failed: " + reason);
+            m_moduleInstallLog->appendPlainText(
+                "[" + QDateTime::currentDateTime().toString("HH:mm:ss") +
+                "] Installation failed: " + reason);
+            appendLog("Magisk module installation failed: " + reason);
             QMessageBox::warning(this, "Magisk module install",
-                                 (timedOut ? "The operation timed out." :
-                                  !started ? "ADB could not be started." :
-                                  pushFinished ? "Magisk could not install the module. Check that Magisk and root access are available." :
-                                  "Could not copy the module to the device.") +
-                                     (output.isEmpty() ? QString() :
-                                      QStringLiteral("\n\n") + QString::fromLocal8Bit(output).trimmed()));
+                                 reason + (details.isEmpty() ? QString() :
+                                     QStringLiteral("\n\n") + details));
             return;
         }
 
@@ -2058,9 +3119,15 @@ void MainWindow::installMagiskModule(const QString &path)
                    {exitCode, output, {}, true, false});
         if (!pushFinished) {
             process->setProperty("pushFinished", true);
+            process->setProperty("installPhase", "Magisk installer");
             process->setProgram(adbExecutable());
             process->setArguments({"-s", serial, "shell", "su", "-c",
                                    QString("magisk --install-module %1").arg(shellQuote(remotePath))});
+            m_moduleInstallStatus->setText("Starting Magisk installer… Approve the root request if prompted.");
+            m_moduleInstallLog->appendPlainText(
+                "[" + QDateTime::currentDateTime().toString("HH:mm:ss") +
+                "] ZIP copied. Starting Magisk installer; approve the superuser request if prompted.");
+            appendLog("Magisk module ZIP copied; starting Magisk installer.");
             statusBar()->showMessage("Installing Magisk module on the device…");
             process->start();
             return;
@@ -2068,6 +3135,12 @@ void MainWindow::installMagiskModule(const QString &path)
 
         m_moduleInstallProcess = nullptr;
         process->deleteLater();
+        m_moduleInstallProgress->setVisible(false);
+        m_moduleInstallStatus->setText(moduleName + " installer completed. Reboot to activate it.");
+        m_moduleInstallLog->appendPlainText(
+            "[" + QDateTime::currentDateTime().toString("HH:mm:ss") +
+            "] Magisk installer completed successfully. Reboot to activate the module.");
+        appendLog("Magisk module installer completed successfully: " + moduleName);
         QMessageBox::information(
             this, "Magisk module",
             "The module installer completed successfully. Reboot the device to activate the module.");
@@ -2079,6 +3152,11 @@ void MainWindow::installMagiskModule(const QString &path)
             return;
         if (m_moduleInstallProcess == process)
             m_moduleInstallProcess = nullptr;
+        m_moduleInstallProgress->setVisible(false);
+        m_moduleInstallStatus->setText("Could not start ADB: " + process->errorString());
+        m_moduleInstallLog->appendPlainText(
+            "[" + QDateTime::currentDateTime().toString("HH:mm:ss") +
+            "] Could not start ADB: " + process->errorString());
         process->deleteLater();
         QMessageBox::warning(this, "Magisk module install",
                              "Could not start ADB:\n" + process->errorString());
