@@ -55,6 +55,7 @@ QPushButton *makeButton(const QString &text, const QString &objectName = {})
 QWidget *makeSection(const QString &title, QVBoxLayout *&layout)
 {
     auto *section = new QWidget;
+    section->setObjectName("sectionPanel");
     layout = new QVBoxLayout(section);
     layout->setContentsMargins(14, 12, 14, 14);
     layout->setSpacing(10);
@@ -76,6 +77,13 @@ QString propertyValue(const QString &text, const QString &key)
         }
     }
     return {};
+}
+
+QStringList splitNonEmpty(const QString &text, const QRegularExpression &expression)
+{
+    QStringList parts = text.split(expression);
+    parts.removeAll(QString());
+    return parts;
 }
 }
 
@@ -289,34 +297,66 @@ void MainWindow::handleDeviceDisconnected(const CommandResult &result)
     QTimer::singleShot(500, this, [this] { refreshDevices(); });
 }
 
-void MainWindow::buildUi()
+void MainWindow::applyTheme(const QString &theme)
 {
-    setStyleSheet(R"(
-        QMainWindow { background: #f3f5f9; }
-        QWidget { color: #202737; font-family: "Segoe UI"; font-size: 10pt; }
-        QTabWidget::pane { border: 1px solid #e0e5ed; background: #ffffff; }
-        QTabBar::tab { background: #e9edf4; padding: 11px 17px; margin-right: 3px; }
-        QTabBar::tab:selected { background: #ffffff; color: #315fe8; font-weight: 600; }
-        QLabel#sectionHeading { color: #283652; font-size: 15pt; font-weight: 650; }
-        QLabel#muted { color: #78839a; }
-        QLabel#metric { background: #f4f7fc; padding: 12px; font-size: 11pt; }
-        QLineEdit, QComboBox, QPlainTextEdit, QListWidget { background: #ffffff; border: 1px solid #dce2ec; padding: 7px; selection-background-color: #5278ec; }
-        QPushButton { background: #f5f7fb; border: 1px solid #dce2ec; padding: 7px 12px; }
-        QPushButton:hover { background: #eaf0ff; border-color: #9eb4fa; }
-        QPushButton#primary { background: #4169e1; color: white; border-color: #4169e1; font-weight: 600; }
+    const bool dark = theme.compare(QStringLiteral("Dark"), Qt::CaseInsensitive) == 0;
+    const QString window = dark ? QStringLiteral("#171b23") : QStringLiteral("#f3f5f9");
+    const QString panel = dark ? QStringLiteral("#202632") : QStringLiteral("#ffffff");
+    const QString field = dark ? QStringLiteral("#171d27") : QStringLiteral("#ffffff");
+    const QString text = dark ? QStringLiteral("#e5eaf2") : QStringLiteral("#202737");
+    const QString heading = dark ? QStringLiteral("#e5eaf2") : QStringLiteral("#283652");
+    const QString muted = dark ? QStringLiteral("#a0adbf") : QStringLiteral("#78839a");
+    const QString border = dark ? QStringLiteral("#3b4657") : QStringLiteral("#dce2ec");
+    const QString tab = dark ? QStringLiteral("#293241") : QStringLiteral("#e9edf4");
+    const QString hover = dark ? QStringLiteral("#303c50") : QStringLiteral("#eaf0ff");
+    const QString metric = dark ? QStringLiteral("#293241") : QStringLiteral("#f4f7fc");
+    const QString scrollbar = dark ? QStringLiteral("#3a4658") : QStringLiteral("#c5cedc");
+    const QString primary = QStringLiteral("#4169e1");
+    const QString danger = dark ? QStringLiteral("#ff858b") : QStringLiteral("#bd3e45");
+
+    QString stylesheet = QStringLiteral(R"(
+        QWidget { color: %1; }
+        QMainWindow { background: %2; }
+        QWidget#centralWidget { background: %2; }
+        QWidget#sectionPanel { background: %4; }
+        QTabWidget::pane { border: 1px solid %3; background: %4; }
+        QTabBar::tab { background: %5; padding: 11px 17px; margin-right: 3px; }
+        QTabBar::tab:selected { background: %4; color: %6; font-weight: 600; }
+        QLabel#sectionHeading { color: %7; font-size: 15pt; font-weight: 650; }
+        QLabel#appTitle { color: %7; }
+        QLabel#quickHeading { color: %8; }
+        QLabel#muted { color: %8; }
+        QLabel#metric { background: %9; padding: 12px; font-size: 11pt; }
+        QLineEdit, QComboBox, QPlainTextEdit, QListWidget {
+            background: %10; color: %1; border: 1px solid %3;
+            padding: 7px; selection-background-color: %6;
+            selection-color: #ffffff;
+        }
+        QComboBox QAbstractItemView { background: %10; color: %1; border: 1px solid %3; }
+        QPushButton { background: %5; color: %1; border: 1px solid %3; padding: 7px 12px; }
+        QPushButton:hover { background: %11; border-color: %6; }
+        QPushButton:disabled { color: %8; }
+        QPushButton#primary { background: %6; color: #ffffff; border-color: %6; font-weight: 600; }
         QPushButton#primary:hover { background: #3158cf; }
-        QPushButton#danger { color: #bd3e45; }
-        QStatusBar { background: #ffffff; color: #65718a; }
-        QComboBox QAbstractItemView { border: 1px solid #dce2ec; }
-        QScrollBar:vertical { width: 12px; background: #f3f5f9; }
-        QScrollBar::handle:vertical { background: #c5cedc; min-height: 24px; }
+        QPushButton#danger { color: %12; }
+        QStatusBar { background: %4; color: %8; }
+        QScrollBar:vertical { width: 12px; background: %2; }
+        QScrollBar::handle:vertical { background: %13; min-height: 24px; }
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-        QScrollBar:horizontal { height: 12px; background: #f3f5f9; }
-        QScrollBar::handle:horizontal { background: #c5cedc; min-width: 24px; }
+        QScrollBar:horizontal { height: 12px; background: %2; }
+        QScrollBar::handle:horizontal { background: %13; min-width: 24px; }
         QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }
     )");
+    stylesheet = stylesheet.arg(text).arg(window).arg(border).arg(panel).arg(tab)
+                   .arg(primary).arg(heading).arg(muted).arg(metric).arg(field)
+                   .arg(hover).arg(danger).arg(scrollbar);
+    setStyleSheet(stylesheet);
+}
 
+void MainWindow::buildUi()
+{
     auto *central = new QWidget;
+    central->setObjectName("centralWidget");
     auto *root = new QVBoxLayout(central);
     root->setContentsMargins(20, 18, 20, 14);
     root->setSpacing(14);
@@ -330,7 +370,8 @@ void MainWindow::buildUi()
     brand->addWidget(brandIcon, 0, Qt::AlignVCenter);
     auto *brandText = new QVBoxLayout;
     auto *title = new QLabel("DroidDesk");
-    title->setStyleSheet("font-size: 22pt; font-weight: 700; color: #243452;");
+    title->setObjectName("appTitle");
+    title->setStyleSheet("font-size: 22pt; font-weight: 700;");
     auto *subtitle = new QLabel("Your Android device, managed from Windows.");
     subtitle->setObjectName("muted");
     brandText->addWidget(title);
@@ -338,6 +379,14 @@ void MainWindow::buildUi()
     brand->addLayout(brandText);
     header->addLayout(brand);
     header->addStretch();
+    header->addWidget(new QLabel("Theme"));
+    m_themeSelector = new QComboBox;
+    m_themeSelector->addItems({"Light", "Dark"});
+    QSettings settings;
+    const QString savedTheme = settings.value("ui/theme", "Light").toString();
+    const int themeIndex = m_themeSelector->findText(savedTheme, Qt::MatchFixedString);
+    m_themeSelector->setCurrentIndex(themeIndex >= 0 ? themeIndex : 0);
+    header->addWidget(m_themeSelector);
     m_devices = new QComboBox;
     m_devices->setMinimumWidth(250);
     m_devices->setMinimumHeight(38);
@@ -347,6 +396,12 @@ void MainWindow::buildUi()
     header->addWidget(refreshButton);
     header->addWidget(settingsButton);
     root->addLayout(header);
+    applyTheme(m_themeSelector->currentText());
+    connect(m_themeSelector, &QComboBox::currentTextChanged, this, [this](const QString &theme) {
+        QSettings settings;
+        settings.setValue("ui/theme", theme);
+        applyTheme(theme);
+    });
 
     auto *tabs = new QTabWidget;
     root->addWidget(tabs, 1);
@@ -373,7 +428,8 @@ void MainWindow::buildUi()
     homeLayout->addLayout(infoGrid);
 
     auto *quick = new QLabel("QUICK ACTIONS");
-    quick->setStyleSheet("font-size: 9pt; font-weight: 700; color: #78839a; margin-top: 8px;");
+    quick->setObjectName("quickHeading");
+    quick->setStyleSheet("font-size: 9pt; font-weight: 700; margin-top: 8px;");
     homeLayout->addWidget(quick);
     auto *quickGrid = new QHBoxLayout;
     auto *quickScreenshot = makeButton("▣  Screenshot");
@@ -739,7 +795,7 @@ void MainWindow::buildUi()
     QVBoxLayout *storeLayout = nullptr;
     auto *storePage = makeSection("GitHub module catalog", storeLayout);
     auto *storeInfo = new QLabel(
-        "Browse the Magisk-Modules-Alt-Repo catalog. Its ZIP links are GitHub source archives, not verified Magisk installer packages; downloading them does not install a module.");
+        "Browse module IDs and download source archives as ZIP or TAR.GZ. Downloads are repository source archives, not verified Magisk installer packages, and are not installed automatically.");
     storeInfo->setObjectName("muted");
     storeInfo->setWordWrap(true);
     storeLayout->addWidget(storeInfo);
@@ -753,20 +809,20 @@ void MainWindow::buildUi()
     m_moduleStoreStatus = new QLabel("Catalog not loaded.");
     m_moduleStoreStatus->setObjectName("muted");
     storeLayout->addWidget(m_moduleStoreStatus);
-    auto *storeContent = new QHBoxLayout;
     m_moduleCatalog = new QListWidget;
     m_moduleCatalog->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_moduleDetails = new QPlainTextEdit;
-    m_moduleDetails->setReadOnly(true);
-    m_moduleDetails->setPlaceholderText("Select a catalog entry to load its module metadata.");
-    auto *storeDetailsLayout = new QVBoxLayout;
-    storeDetailsLayout->addWidget(m_moduleDetails, 1);
-    m_moduleDownload = makeButton("Download source ZIP…");
+    storeLayout->addWidget(m_moduleCatalog, 1);
+    auto *archiveActions = new QHBoxLayout;
+    archiveActions->addWidget(new QLabel("Archive format"));
+    m_moduleArchiveFormat = new QComboBox;
+    m_moduleArchiveFormat->addItem("ZIP", "zip");
+    m_moduleArchiveFormat->addItem("TAR.GZ", "tar.gz");
+    archiveActions->addWidget(m_moduleArchiveFormat);
+    archiveActions->addStretch();
+    m_moduleDownload = makeButton("Download source archive…", "primary");
     m_moduleDownload->setEnabled(false);
-    storeDetailsLayout->addWidget(m_moduleDownload, 0, Qt::AlignRight);
-    storeContent->addWidget(m_moduleCatalog, 1);
-    storeContent->addLayout(storeDetailsLayout, 1);
-    storeLayout->addLayout(storeContent, 1);
+    archiveActions->addWidget(m_moduleDownload);
+    storeLayout->addLayout(archiveActions);
     rootTabs->addTab(storePage, "Module store");
 
     QVBoxLayout *rootShellLayout = nullptr;
@@ -1271,8 +1327,8 @@ void MainWindow::buildUi()
     });
     connect(m_moduleSearch, &QLineEdit::textChanged, this, &MainWindow::filterModuleCatalog);
     connect(m_moduleCatalog, &QListWidget::itemSelectionChanged, this, [this] {
-        if (m_moduleCatalog->currentItem())
-            showModuleDetails(m_moduleCatalog->currentItem());
+        m_moduleDownload->setEnabled(m_moduleCatalog->currentItem() != nullptr &&
+                                     m_moduleDownloadReply == nullptr);
     });
     connect(m_moduleDownload, &QPushButton::clicked, this, &MainWindow::downloadSelectedModule);
     connect(clearLog, &QPushButton::clicked, m_output, &QPlainTextEdit::clear);
@@ -1410,7 +1466,7 @@ void MainWindow::refreshDevices(bool periodic)
             const QString trimmed = line.trimmed();
             if (trimmed.isEmpty() || trimmed.startsWith("List of devices"))
                 continue;
-            const QStringList parts = trimmed.split(QRegularExpression("\\s+"), QString::SkipEmptyParts);
+            const QStringList parts = splitNonEmpty(trimmed, QRegularExpression("\\s+"));
             if (parts.size() < 2)
                 continue;
             const QString serial = parts.at(0);
@@ -1771,8 +1827,8 @@ void MainWindow::installApk(const QString &path)
         if (accumulated.size() > maxOutputBytes)
             accumulated = accumulated.right(maxOutputBytes);
         process->setProperty("installOutput", accumulated);
-        const QStringList lines = QString::fromLocal8Bit(newOutput).split(
-            QRegularExpression("[\\r\\n]+"), QString::SkipEmptyParts);
+        const QStringList lines = splitNonEmpty(QString::fromLocal8Bit(newOutput),
+                                                QRegularExpression("[\\r\\n]+"));
         if (!lines.isEmpty()) {
             m_appInstallStatus->setText(
                 QString("Installing %1: %2").arg(QFileInfo(process->arguments().last()).fileName(),
@@ -2110,7 +2166,8 @@ void MainWindow::loadModuleCatalog()
     }
 
     QNetworkRequest request(catalogUrl);
-    request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
     request.setRawHeader("User-Agent", "DroidDesk/1.0");
     m_catalogReply = m_networkManager->get(request);
     auto *timeout = new QTimer(m_catalogReply);
@@ -2175,27 +2232,14 @@ void MainWindow::processModuleCatalogResponse(const QByteArray &data, const QUrl
         const QJsonObject object = value.toObject();
         ModuleCatalogEntry entry;
         entry.id = object.value("id").toString();
-        entry.propUrl = object.value("prop_url").toString();
-        entry.notesUrl = object.value("notes_url").toString();
         entry.zipUrl = object.value("zip_url").toString();
-        entry.stars = object.value("stars").toInt(-1);
-        entry.lastUpdated = qint64(object.value("last_update").toDouble());
-        const QUrl propUrl(entry.propUrl);
-        const QUrl notesUrl(entry.notesUrl);
         const QUrl zipUrl(entry.zipUrl);
         const QString repositoryPath =
             QStringLiteral("/Magisk-Modules-Alt-Repo/") + entry.id + QLatin1Char('/');
         if (!safeId.match(entry.id).hasMatch() || entry.id == QStringLiteral(".") ||
             entry.id == QStringLiteral("..") || seenIds.contains(entry.id) ||
-            entry.stars < 0 || !propUrl.isValid() || !notesUrl.isValid() ||
-            !zipUrl.isValid() || propUrl.scheme() != QStringLiteral("https") ||
-            notesUrl.scheme() != QStringLiteral("https") ||
-            zipUrl.scheme() != QStringLiteral("https") ||
-            propUrl.host() != QStringLiteral("raw.githubusercontent.com") ||
-            notesUrl.host() != QStringLiteral("raw.githubusercontent.com") ||
+            !zipUrl.isValid() || zipUrl.scheme() != QStringLiteral("https") ||
             zipUrl.host() != QStringLiteral("github.com") ||
-            !propUrl.path().startsWith(repositoryPath) ||
-            !notesUrl.path().startsWith(repositoryPath) ||
             !zipUrl.path().startsWith(repositoryPath + QStringLiteral("archive/")) ||
             !zipUrl.path().endsWith(QStringLiteral(".zip"), Qt::CaseInsensitive))
             continue;
@@ -2209,125 +2253,19 @@ void MainWindow::processModuleCatalogResponse(const QByteArray &data, const QUrl
     }
     std::sort(entries.begin(), entries.end(), [](const ModuleCatalogEntry &left,
                                                  const ModuleCatalogEntry &right) {
-        if (left.stars != right.stars)
-            return left.stars > right.stars;
         return left.id.compare(right.id, Qt::CaseInsensitive) < 0;
     });
     m_catalogEntries = entries;
     m_moduleCatalog->clear();
     for (const ModuleCatalogEntry &entry : m_catalogEntries) {
-        auto *item = new QListWidgetItem(
-            QString("%1  ★ %2").arg(entry.id).arg(entry.stars), m_moduleCatalog);
+        auto *item = new QListWidgetItem(entry.id, m_moduleCatalog);
         item->setData(Qt::UserRole, entry.id);
     }
     m_moduleStoreStatus->setText(
         QString("Loaded %1 validated entries from Magisk-Modules-Alt-Repo.")
             .arg(m_catalogEntries.size()));
     filterModuleCatalog(m_moduleSearch->text());
-    m_moduleDetails->clear();
-    m_moduleDownload->setEnabled(false);
-}
-
-void MainWindow::showModuleDetails(QListWidgetItem *item)
-{
-    if (!item)
-        return;
-    const QString id = item->data(Qt::UserRole).toString();
-    auto entryIt = std::find_if(m_catalogEntries.cbegin(), m_catalogEntries.cend(),
-                                [&id](const ModuleCatalogEntry &entry) { return entry.id == id; });
-    if (entryIt == m_catalogEntries.cend())
-        return;
-
-    if (m_moduleMetadataReply) {
-        m_moduleMetadataReply->abort();
-        m_moduleMetadataReply = nullptr;
-    }
-    m_moduleDownload->setEnabled(true);
-    m_moduleDetails->setPlainText(
-        QString("Loading metadata for %1…\n\nCatalog stars: %2\nUpdated: %3\n\n"
-                "The catalog ZIP is a GitHub source archive, not a verified Magisk installer ZIP.")
-            .arg(id)
-            .arg(entryIt->stars)
-            .arg(entryIt->lastUpdated > 0
-                     ? QDateTime::fromMSecsSinceEpoch(entryIt->lastUpdated).toLocalTime()
-                           .toString(Qt::DefaultLocaleShortDate)
-                     : QStringLiteral("unknown")));
-
-    QNetworkRequest request(QUrl(entryIt->propUrl));
-    request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
-    request.setRawHeader("User-Agent", "DroidDesk/1.0");
-    QNetworkReply *reply = m_networkManager->get(request);
-    m_moduleMetadataReply = reply;
-    auto *timeout = new QTimer(reply);
-    timeout->setSingleShot(true);
-    connect(timeout, &QTimer::timeout, reply, &QNetworkReply::abort);
-    timeout->start(20000);
-    connect(reply, &QNetworkReply::downloadProgress, this, [reply](qint64 received, qint64) {
-        if (received > 1024 * 1024)
-            reply->abort();
-    });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, timeout, id] {
-        timeout->stop();
-        if (m_moduleMetadataReply != reply) {
-            reply->deleteLater();
-            return;
-        }
-        m_moduleMetadataReply = nullptr;
-        const QByteArray data = reply->readAll();
-        const QString errorText = reply->errorString();
-        const bool failed = reply->error() != QNetworkReply::NoError ||
-                            reply->url().scheme() != QStringLiteral("https") ||
-                            reply->url().host() != QStringLiteral("raw.githubusercontent.com");
-        reply->deleteLater();
-
-        auto entryIt = std::find_if(m_catalogEntries.begin(), m_catalogEntries.end(),
-                                    [&id](const ModuleCatalogEntry &entry) { return entry.id == id; });
-        if (entryIt == m_catalogEntries.end())
-            return;
-        if (failed) {
-            m_moduleDetails->setPlainText(
-                QString("Could not load metadata for %1: %2\n\n"
-                        "Stars: %3\nUpdated: %4\n\n"
-                        "The catalog download is an unverified GitHub source archive, not a Magisk installer ZIP.")
-                    .arg(id, errorText)
-                    .arg(entryIt->stars)
-                    .arg(entryIt->lastUpdated > 0
-                             ? QDateTime::fromMSecsSinceEpoch(entryIt->lastUpdated).toLocalTime()
-                                   .toString(Qt::DefaultLocaleShortDate)
-                             : QStringLiteral("unknown")));
-            return;
-        }
-
-        const QString properties = QString::fromUtf8(data);
-        auto property = [&properties](const QString &key) {
-            const QString prefix = key + QLatin1Char('=');
-            for (const QString &line : properties.split(QLatin1Char('\n'))) {
-                if (line.startsWith(prefix))
-                    return line.mid(prefix.size()).trimmed();
-            }
-            return QString();
-        };
-        entryIt->name = property("name");
-        entryIt->description = property("description");
-        entryIt->version = property("version");
-        entryIt->author = property("author");
-        m_moduleDetails->setPlainText(
-            QString("Name: %1\nID: %2\nVersion: %3\nAuthor: %4\n\nDescription:\n%5\n\n"
-                    "Stars: %6\nUpdated: %7\n\n"
-                    "Source: Magisk-Modules-Alt-Repo/%2\n"
-                    "The catalog ZIP is a repository source archive. DroidDesk does not treat it as an installable module package.")
-                .arg(entryIt->name.isEmpty() ? id : entryIt->name, id,
-                     entryIt->version.isEmpty() ? QStringLiteral("unknown") : entryIt->version,
-                     entryIt->author.isEmpty() ? QStringLiteral("unknown") : entryIt->author,
-                     entryIt->description.isEmpty() ? QStringLiteral("No description provided.")
-                                                    : entryIt->description)
-                .arg(entryIt->stars)
-                .arg(entryIt->lastUpdated > 0
-                         ? QDateTime::fromMSecsSinceEpoch(entryIt->lastUpdated).toLocalTime()
-                               .toString(Qt::DefaultLocaleShortDate)
-                         : QStringLiteral("unknown")));
-        filterModuleCatalog(m_moduleSearch->text());
-    });
+    m_moduleDownload->setEnabled(m_moduleCatalog->currentItem() != nullptr);
 }
 
 void MainWindow::downloadSelectedModule()
@@ -2344,35 +2282,54 @@ void MainWindow::downloadSelectedModule()
                                       [&id](const ModuleCatalogEntry &entry) { return entry.id == id; });
     if (entryIt == m_catalogEntries.cend())
         return;
+    const QString archiveFormat = m_moduleArchiveFormat->currentData().toString();
+    if (archiveFormat != QStringLiteral("zip") && archiveFormat != QStringLiteral("tar.gz"))
+        return;
+    QUrl archiveUrl(entryIt->zipUrl);
+    QString archivePath = archiveUrl.path();
+    if (!archivePath.endsWith(QStringLiteral(".zip"), Qt::CaseInsensitive))
+        return;
+    archivePath.chop(4);
+    archivePath += QLatin1Char('.') + archiveFormat;
+    archiveUrl.setPath(archivePath);
+
     if (QMessageBox::warning(
             this, "Download module source archive",
-            QString("Download the GitHub source archive for %1?\n\n"
-                    "This is not a verified Magisk installer ZIP. Review the source and package it using the module author's instructions before installation.")
-                .arg(entryIt->name.isEmpty() ? id : entryIt->name),
+            QString("Download the GitHub %1 source archive for %2?\n\n"
+                    "This is not a verified Magisk installer package. Review the source and package it using the module author's instructions before installation.")
+                .arg(archiveFormat.toUpper(), id),
             QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Ok)
         return;
 
     QString downloads = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     if (downloads.isEmpty())
         downloads = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString saveFilter = archiveFormat == QStringLiteral("zip")
+                                   ? QStringLiteral("ZIP archive (*.zip);;All files (*)")
+                                   : QStringLiteral("TAR.GZ archive (*.tar.gz);;All files (*)");
     const QString path = QFileDialog::getSaveFileName(
         this, "Save module source archive",
-        QDir(downloads).filePath(id + "-source.zip"),
-        "ZIP archives (*.zip)");
+        QDir(downloads).filePath(id + "-source." + archiveFormat),
+        saveFilter);
     if (path.isEmpty())
         return;
-    m_moduleDownloadFile = new QSaveFile(path);
+    QString destinationPath = path;
+    const QString requiredSuffix = QLatin1Char('.') + archiveFormat;
+    if (!destinationPath.endsWith(requiredSuffix, Qt::CaseInsensitive))
+        destinationPath += requiredSuffix;
+    m_moduleDownloadFile = new QSaveFile(destinationPath);
     if (!m_moduleDownloadFile->open(QIODevice::WriteOnly)) {
         delete m_moduleDownloadFile;
         m_moduleDownloadFile = nullptr;
-        QMessageBox::warning(this, "Module store", "Could not create the download file:\n" + path);
+        QMessageBox::warning(this, "Module store", "Could not create the download file:\n" + destinationPath);
         return;
     }
-    m_moduleDownloadPath = path;
+    m_moduleDownloadPath = destinationPath;
     m_moduleDownloadPrefix.clear();
 
-    QNetworkRequest request(QUrl(entryIt->zipUrl));
-    request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+    QNetworkRequest request(archiveUrl);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
     request.setRawHeader("User-Agent", "DroidDesk/1.0");
     QNetworkReply *reply = m_networkManager->get(request);
     m_moduleDownloadReply = reply;
@@ -2391,7 +2348,7 @@ void MainWindow::downloadSelectedModule()
         }
     });
     connect(reply, &QNetworkReply::downloadProgress, this,
-            [this, reply](qint64 received, qint64 total) {
+            [this, reply, archiveFormat](qint64 received, qint64 total) {
         constexpr qint64 maxDownloadSize = 512LL * 1024 * 1024;
         if (received > maxDownloadSize) {
             reply->setProperty("sizeExceeded", true);
@@ -2399,13 +2356,16 @@ void MainWindow::downloadSelectedModule()
             return;
         }
         m_moduleStoreStatus->setText(
-            total > 0 ? QString("Downloading source archive: %1 / %2 MB")
+            total > 0 ? QString("Downloading %1 source archive: %2 / %3 MB")
+                            .arg(archiveFormat.toUpper())
                             .arg(received / (1024 * 1024))
                             .arg(total / (1024 * 1024))
-                      : QString("Downloading source archive: %1 MB")
+                      : QString("Downloading %1 source archive: %2 MB")
+                            .arg(archiveFormat.toUpper())
                             .arg(received / (1024 * 1024)));
     });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, timeout, id] {
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, timeout, id, archiveFormat] {
         timeout->stop();
         const QByteArray trailing = reply->readAll();
         if (!trailing.isEmpty() && m_moduleDownloadFile) {
@@ -2419,11 +2379,13 @@ void MainWindow::downloadSelectedModule()
             finalUrl.scheme() == QStringLiteral("https") &&
             (finalUrl.host() == QStringLiteral("github.com") ||
              finalUrl.host() == QStringLiteral("codeload.github.com"));
-        const bool validZip = m_moduleDownloadPrefix.startsWith("PK\x03\x04") ||
-                              m_moduleDownloadPrefix.startsWith("PK\x05\x06") ||
-                              m_moduleDownloadPrefix.startsWith("PK\x07\x08");
+        const bool validArchive = archiveFormat == QStringLiteral("zip")
+                                      ? m_moduleDownloadPrefix.startsWith("PK\x03\x04") ||
+                                            m_moduleDownloadPrefix.startsWith("PK\x05\x06") ||
+                                            m_moduleDownloadPrefix.startsWith("PK\x07\x08")
+                                      : m_moduleDownloadPrefix.startsWith("\x1f\x8b");
         const bool success = reply->error() == QNetworkReply::NoError && validHost &&
-                             validZip && !reply->property("writeFailed").toBool() &&
+                             validArchive && !reply->property("writeFailed").toBool() &&
                              !reply->property("sizeExceeded").toBool() && m_moduleDownloadFile &&
                              m_moduleDownloadFile->commit();
         const QString errorText = reply->errorString();
@@ -2444,14 +2406,15 @@ void MainWindow::downloadSelectedModule()
                 this, "Module store",
                 tooLarge ? "The archive exceeded the 512 MB safety limit." :
                 writeFailed ? "Could not write the download file." :
-                validHost && validZip ? "Download failed: " + errorText :
-                "The response was not a ZIP archive from an approved GitHub download host.");
+                validHost && validArchive ? "Download failed: " + errorText :
+                "The response did not match the selected archive format or came from an unapproved GitHub download host.");
             return;
         }
-        m_moduleStoreStatus->setText(QString("Downloaded source archive for %1.").arg(id));
+        m_moduleStoreStatus->setText(
+            QString("Downloaded %1 source archive for %2.").arg(archiveFormat.toUpper(), id));
         QMessageBox::information(
             this, "Module source downloaded",
-            QString("Saved to:\n%1\n\nThis is a source archive, not a verified Magisk installer ZIP. Review the repository and follow its packaging instructions before using Install module ZIP.")
+            QString("Saved to:\n%1\n\nThis is a source archive, not a verified Magisk installer package. Review the repository and follow its packaging instructions before installation.")
                 .arg(m_moduleDownloadPath));
     });
 }
@@ -2459,30 +2422,17 @@ void MainWindow::downloadSelectedModule()
 void MainWindow::filterModuleCatalog(const QString &text)
 {
     const QString needle = text.trimmed();
-    QListWidgetItem *selectedItem = m_moduleCatalog->currentItem();
     for (int i = 0; i < m_moduleCatalog->count(); ++i) {
         QListWidgetItem *item = m_moduleCatalog->item(i);
         const QString id = item->data(Qt::UserRole).toString();
-        auto entryIt = std::find_if(m_catalogEntries.cbegin(), m_catalogEntries.cend(),
-                                    [&id](const ModuleCatalogEntry &entry) { return entry.id == id; });
-        if (entryIt == m_catalogEntries.cend()) {
-            item->setHidden(true);
-            continue;
-        }
-        const QString searchable = id + QLatin1Char(' ') + entryIt->name + QLatin1Char(' ') +
-                                   entryIt->author + QLatin1Char(' ') + entryIt->description;
-        item->setHidden(!searchable.contains(needle, Qt::CaseInsensitive));
+        item->setHidden(!id.contains(needle, Qt::CaseInsensitive));
     }
-    if (selectedItem && selectedItem->isHidden()) {
+    if (m_moduleCatalog->currentItem() && m_moduleCatalog->currentItem()->isHidden()) {
         m_moduleCatalog->clearSelection();
         m_moduleCatalog->setCurrentItem(nullptr);
-        if (m_moduleMetadataReply) {
-            m_moduleMetadataReply->abort();
-            m_moduleMetadataReply = nullptr;
-        }
-        m_moduleDownload->setEnabled(false);
-        m_moduleDetails->clear();
     }
+    if (!m_moduleCatalog->currentItem())
+        m_moduleDownload->setEnabled(false);
 }
 
 void MainWindow::checkRootStatus()
@@ -2617,11 +2567,12 @@ void MainWindow::runSelinuxCommand(bool changeMode, bool enforcing)
         const QString targetMode = enforcing ? QStringLiteral("Enforcing")
                                              : QStringLiteral("Permissive");
         const QString message = enforcing
-            ? QStringLiteral("Set SELinux to Enforcing on %1? This can restrict modifications made by root tools or modules.")
+            ? QStringLiteral("Set SELinux to Enforcing on %1? This can restrict modifications made by root tools or modules, or you can't open mostly apps.")
                   .arg(serial)
             : QStringLiteral("Set SELinux to Permissive on %1?\n\n"
                              "This weakens Android's security enforcement and can expose the device to increased risk. "
-                             "Only continue if you understand why this is needed.")
+                             "Recommend if you can't open apps"
+                            )
                   .arg(serial);
         const QMessageBox::StandardButton answer = enforcing
             ? QMessageBox::question(this, "Change SELinux mode", message,
@@ -2698,7 +2649,8 @@ void MainWindow::runSelinuxCommand(bool changeMode, bool enforcing)
 
         QString reportedMode;
         const QString outputText = QString::fromLocal8Bit(output);
-        for (const QString &line : outputText.split(QRegularExpression("[\\r\\n]+"), QString::SkipEmptyParts)) {
+        for (const QString &line : splitNonEmpty(
+                 outputText, QRegularExpression("[\\r\\n]+"))) {
             const QString mode = line.trimmed();
             if (mode.compare(QStringLiteral("Enforcing"), Qt::CaseInsensitive) == 0 ||
                 mode.compare(QStringLiteral("Permissive"), Qt::CaseInsensitive) == 0) {
@@ -3028,7 +2980,7 @@ void MainWindow::installMagiskModule(const QString &path)
         QByteArray lineBuffer = process->property("installLineBuffer").toByteArray();
         lineBuffer += chunk;
         QStringList lines = QString::fromLocal8Bit(lineBuffer).split(
-            QRegularExpression("[\\r\\n]+"), QString::KeepEmptyParts);
+            QRegularExpression("[\\r\\n]+"));
         const bool endsWithDelimiter =
             lineBuffer.endsWith('\n') || lineBuffer.endsWith('\r');
         if (!flushPartialLine && !endsWithDelimiter && !lines.isEmpty()) {

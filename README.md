@@ -7,6 +7,7 @@ The Android PNG icon is based on Google's [Material Design Android icon](https:/
 
 ## Features
 
+- Choose a light or dark interface theme; the selection is remembered between launches.
 - Detect authorized ADB devices and show model, Android version, serial, display size/density, and battery level.
 - Automatically refresh ADB connection status and log device connect, disconnect, and authorization-state changes.
 - Install APKs, list user or all packages, launch apps, force-stop apps, clear app data, and uninstall packages for user 0.
@@ -21,7 +22,7 @@ The Android PNG icon is based on Google's [Material Design Android icon](https:/
 - List installed Magisk modules, enable or disable modules, schedule modules for removal, and install Magisk module ZIPs on devices with Magisk and working `su` access. The Root & Magisk tab shows live copy and installer output; reboot the device to apply module changes.
 - Check whether the selected device grants root access and whether Magisk is detected.
 - Check SELinux mode and, with root access, request Enforcing or Permissive mode from the dedicated Root & Magisk section.
-- Browse and search the public [Magisk-Modules-Alt-Repo catalog](https://github.com/Magisk-Modules-Alt-Repo/json), view module metadata, and download catalog source archives.
+- Browse and search the public [Magisk-Modules-Alt-Repo catalog](https://github.com/Magisk-Modules-Alt-Repo/json), and download source archives as ZIP or TAR.GZ without displaying metadata.
 - Run standard device shell commands and use the separate Root & Magisk tab for commands through `su`.
 
 ## Requirements
@@ -40,7 +41,7 @@ cmake --build build\kits_Debug --config Debug
 
 ## Root and device safety
 
-Root-only commands and Magisk module actions invoke `su` only on a device that is already rooted and grants the request. The root checker sends a harmless `id -u` probe through `su`; approve or deny the resulting superuser request on the device. It reports root access separately from Magisk detection and does not root a device, unlock its bootloader, bypass Android security, or provide a rooting exploit. The SELinux section reads the current mode through `su` and requires confirmation before requesting a mode change. Permissive mode weakens Android's security enforcement; use it only when necessary, and verify the device's reported mode because Android policy may reject or override the request. The module catalog is a third-party project; catalog metadata and repository source archives are not security-reviewed or verified Magisk installer packages. A catalog archive download does not install a module. Review the source, compatibility, and author packaging instructions, and obtain a genuine installable ZIP before using the local module installer. Modules are marked for removal and removed by Magisk at reboot; enable/disable and module installation changes also require a reboot. Bootloader, recovery, sideload, app-data clearing, uninstall, and shell operations can change device state; verify the target device, module source, and package before confirming.
+Root-only commands and Magisk module actions invoke `su` only on a device that is already rooted and grants the request. The root checker sends a harmless `id -u` probe through `su`; approve or deny the resulting superuser request on the device. It reports root access separately from Magisk detection and does not root a device, unlock its bootloader, bypass Android security, or provide a rooting exploit. The SELinux section reads the current mode through `su` and requires confirmation before requesting a mode change. Permissive mode weakens Android's security enforcement; use it only when necessary, and verify the device's reported mode because Android policy may reject or override the request. The module catalog is a third-party project; its repository source archives are not security-reviewed or verified Magisk installer packages. A catalog archive download does not install a module. Review the source, compatibility, and author packaging instructions, and obtain a genuine installable ZIP before using the local module installer. Modules are marked for removal and removed by Magisk at reboot; enable/disable and module installation changes also require a reboot. Bootloader, recovery, sideload, app-data clearing, uninstall, and shell operations can change device state; verify the target device, module source, and package before confirming.
 
 ## Third-party software
 

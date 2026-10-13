@@ -16,7 +16,6 @@ class QProcess;
 class QProgressBar;
 class QPushButton;
 class QTimer;
-class QListWidgetItem;
 class QNetworkAccessManager;
 class QNetworkReply;
 class QSaveFile;
@@ -40,15 +39,7 @@ private:
 
     struct ModuleCatalogEntry {
         QString id;
-        QString propUrl;
-        QString notesUrl;
         QString zipUrl;
-        QString name;
-        QString description;
-        QString version;
-        QString author;
-        int stars = 0;
-        qint64 lastUpdated = 0;
     };
 
     CommandResult runAdb(const QStringList &arguments, int timeoutMs = 30000);
@@ -69,8 +60,8 @@ private:
     void removeMagiskModule();
     void checkRootStatus();
     void runSelinuxCommand(bool changeMode, bool enforcing);
+    void applyTheme(const QString &theme);
     void loadModuleCatalog();
-    void showModuleDetails(QListWidgetItem *item);
     void downloadSelectedModule();
     void filterModuleCatalog(const QString &text);
     void logCommand(const QString &label, const CommandResult &result);
@@ -85,6 +76,7 @@ private:
 
     QComboBox *m_devices = nullptr;
     QComboBox *m_systemApps = nullptr;
+    QComboBox *m_themeSelector = nullptr;
     QProcess *m_deviceScan = nullptr;
     QTimer *m_devicePollTimer = nullptr;
     QProcess *m_deviceInfoQuery = nullptr;
@@ -140,13 +132,12 @@ private:
     QListWidget *m_magiskModules = nullptr;
     QLineEdit *m_moduleSearch = nullptr;
     QListWidget *m_moduleCatalog = nullptr;
-    QPlainTextEdit *m_moduleDetails = nullptr;
     QLabel *m_moduleStoreStatus = nullptr;
+    QComboBox *m_moduleArchiveFormat = nullptr;
     QPushButton *m_moduleDownload = nullptr;
     QNetworkAccessManager *m_networkManager = nullptr;
     QNetworkReply *m_catalogReply = nullptr;
     QProcess *m_catalogCurlProcess = nullptr;
-    QNetworkReply *m_moduleMetadataReply = nullptr;
     QNetworkReply *m_moduleDownloadReply = nullptr;
     QSaveFile *m_moduleDownloadFile = nullptr;
     QString m_moduleDownloadPath;
