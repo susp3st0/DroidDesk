@@ -7,7 +7,7 @@ The Android PNG icon is based on Google's [Material Design Android icon](https:/
 
 ## Features
 
-- Choose a light or dark interface theme; the selection is remembered between launches.
+- Toggle between light and dark interface themes with the moon/sun button; the selection is remembered between launches.
 - Detect authorized ADB devices and show model, Android version, serial, display size/density, and battery level.
 - Automatically refresh ADB connection status and log device connect, disconnect, and authorization-state changes.
 - Install APKs, list user or all packages, launch apps, force-stop apps, clear app data, and uninstall packages for user 0.

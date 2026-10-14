@@ -15,6 +15,7 @@ class QPlainTextEdit;
 class QProcess;
 class QProgressBar;
 class QPushButton;
+class QToolButton;
 class QTimer;
 class QNetworkAccessManager;
 class QNetworkReply;
@@ -76,7 +77,7 @@ private:
 
     QComboBox *m_devices = nullptr;
     QComboBox *m_systemApps = nullptr;
-    QComboBox *m_themeSelector = nullptr;
+    QToolButton *m_themeToggle = nullptr;
     QProcess *m_deviceScan = nullptr;
     QTimer *m_devicePollTimer = nullptr;
     QProcess *m_deviceInfoQuery = nullptr;

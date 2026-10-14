@@ -25,6 +25,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QPlainTextEdit>
+#include <QPainter>
 #include <QProgressBar>
 #include <QProcess>
 #include <QPushButton>
@@ -36,6 +37,7 @@
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTabWidget>
+#include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QTimer>
@@ -85,13 +87,45 @@ QStringList splitNonEmpty(const QString &text, const QRegularExpression &express
     parts.removeAll(QString());
     return parts;
 }
+
+QIcon themeToggleIcon(bool currentDark)
+{
+    constexpr int iconSize = 32;
+    QPixmap pixmap(iconSize, iconSize);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QColor foreground = currentDark ? QColor("#f5c451") : QColor("#52617a");
+    const QColor cutout = currentDark ? QColor("#171d27") : QColor("#ffffff");
+    QPen pen(foreground, 2.2, Qt::SolidLine, Qt::RoundCap);
+    painter.setPen(pen);
+    painter.setBrush(foreground);
+
+    if (!currentDark) {
+        painter.drawEllipse(QRectF(7, 7, 18, 18));
+        painter.setBrush(cutout);
+        painter.setPen(Qt::NoPen);
+        painter.drawEllipse(QRectF(14, 3, 17, 17));
+    } else {
+        painter.drawEllipse(QRectF(12, 12, 8, 8));
+        for (int angle = 0; angle < 360; angle += 45) {
+            painter.save();
+            painter.translate(iconSize / 2.0, iconSize / 2.0);
+            painter.rotate(angle);
+            painter.drawLine(QPointF(0, -8), QPointF(0, -12));
+            painter.restore();
+        }
+    }
+    return QIcon(pixmap);
+}
 }
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     buildUi();
-    setWindowTitle("DroidDesk — Android Device Manager");
+    setWindowTitle("adbtools — Android Device Manager");
     setWindowIcon(QIcon(":/icons/android.png"));
     resize(1160, 790);
     setMinimumSize(920, 640);
@@ -339,6 +373,10 @@ void MainWindow::applyTheme(const QString &theme)
         QPushButton#primary { background: %6; color: #ffffff; border-color: %6; font-weight: 600; }
         QPushButton#primary:hover { background: #3158cf; }
         QPushButton#danger { color: %12; }
+        QToolButton#themeToggle {
+            background: %10; border: 1px solid %3; padding: 5px;
+        }
+        QToolButton#themeToggle:hover { background: %11; border-color: %6; }
         QStatusBar { background: %4; color: %8; }
         QScrollBar:vertical { width: 12px; background: %2; }
         QScrollBar::handle:vertical { background: %13; min-height: 24px; }
@@ -351,6 +389,12 @@ void MainWindow::applyTheme(const QString &theme)
                    .arg(primary).arg(heading).arg(muted).arg(metric).arg(field)
                    .arg(hover).arg(danger).arg(scrollbar);
     setStyleSheet(stylesheet);
+    if (m_themeToggle) {
+        m_themeToggle->setIcon(themeToggleIcon(dark));
+        m_themeToggle->setToolTip(dark ? QStringLiteral("Switch to light theme")
+                                       : QStringLiteral("Switch to dark theme"));
+        m_themeToggle->setAccessibleName(m_themeToggle->toolTip());
+    }
 }
 
 void MainWindow::buildUi()
@@ -369,7 +413,7 @@ void MainWindow::buildUi()
     brandIcon->setAlignment(Qt::AlignCenter);
     brand->addWidget(brandIcon, 0, Qt::AlignVCenter);
     auto *brandText = new QVBoxLayout;
-    auto *title = new QLabel("DroidDesk");
+    auto *title = new QLabel("adbtools");
     title->setObjectName("appTitle");
     title->setStyleSheet("font-size: 22pt; font-weight: 700;");
     auto *subtitle = new QLabel("Your Android device, managed from Windows.");
@@ -379,14 +423,18 @@ void MainWindow::buildUi()
     brand->addLayout(brandText);
     header->addLayout(brand);
     header->addStretch();
-    header->addWidget(new QLabel("Theme"));
-    m_themeSelector = new QComboBox;
-    m_themeSelector->addItems({"Light", "Dark"});
+    m_themeToggle = new QToolButton;
+    m_themeToggle->setObjectName("themeToggle");
+    m_themeToggle->setIconSize(QSize(22, 22));
+    m_themeToggle->setFixedSize(38, 38);
+    m_themeToggle->setToolButtonStyle(Qt::ToolButtonIconOnly);
     QSettings settings;
     const QString savedTheme = settings.value("ui/theme", "Light").toString();
-    const int themeIndex = m_themeSelector->findText(savedTheme, Qt::MatchFixedString);
-    m_themeSelector->setCurrentIndex(themeIndex >= 0 ? themeIndex : 0);
-    header->addWidget(m_themeSelector);
+    const QString initialTheme =
+        savedTheme.compare(QStringLiteral("Dark"), Qt::CaseInsensitive) == 0
+            ? QStringLiteral("Dark")
+            : QStringLiteral("Light");
+    header->addWidget(m_themeToggle);
     m_devices = new QComboBox;
     m_devices->setMinimumWidth(250);
     m_devices->setMinimumHeight(38);
@@ -396,9 +444,14 @@ void MainWindow::buildUi()
     header->addWidget(refreshButton);
     header->addWidget(settingsButton);
     root->addLayout(header);
-    applyTheme(m_themeSelector->currentText());
-    connect(m_themeSelector, &QComboBox::currentTextChanged, this, [this](const QString &theme) {
+    applyTheme(initialTheme);
+    connect(m_themeToggle, &QToolButton::clicked, this, [this] {
         QSettings settings;
+        const QString currentTheme = settings.value("ui/theme", "Light").toString();
+        const QString theme =
+            currentTheme.compare(QStringLiteral("Dark"), Qt::CaseInsensitive) == 0
+                ? QStringLiteral("Light")
+                : QStringLiteral("Dark");
         settings.setValue("ui/theme", theme);
         applyTheme(theme);
     });
@@ -682,7 +735,7 @@ void MainWindow::buildUi()
     QVBoxLayout *rootLayout = nullptr;
     auto *rootPage = makeSection("Root & Magisk", rootLayout);
     auto *rootInfo = new QLabel(
-        "Root features require an already-rooted device, Magisk installed, and an approved superuser request. DroidDesk does not unlock bootloaders or root devices. Review each module before installing; changes may prevent the device from booting.");
+        "Root features require an already-rooted device, Magisk installed, and an approved superuser request. adbtools does not unlock bootloaders or root devices. Review each module before installing; changes may prevent the device from booting.");
     rootInfo->setObjectName("muted");
     rootInfo->setWordWrap(true);
     rootLayout->addWidget(rootInfo);
@@ -785,7 +838,7 @@ void MainWindow::buildUi()
     selinuxActions->addStretch();
     selinuxLayout->addLayout(selinuxActions);
     auto *selinuxNote = new QLabel(
-        "Changing SELinux mode requires working root access. DroidDesk verifies the reported mode after each request; a device policy may reject or override it.");
+        "Changing SELinux mode requires working root access. adbtools verifies the reported mode after each request; a device policy may reject or override it.");
     selinuxNote->setObjectName("muted");
     selinuxNote->setWordWrap(true);
     selinuxLayout->addWidget(selinuxNote);
@@ -911,7 +964,7 @@ void MainWindow::buildUi()
             return;
         QStringList batch;
         if (m_droppedLogcatLines > 0) {
-            batch << QStringLiteral("[DroidDesk dropped %1 log lines because the display could not keep up]")
+            batch << QStringLiteral("[adbtools dropped %1 log lines because the display could not keep up]")
                          .arg(m_droppedLogcatLines);
             m_droppedLogcatLines = 0;
         }
@@ -961,7 +1014,7 @@ void MainWindow::buildUi()
         QString initialPath = m_scrcpyRecordingPath->text().trimmed();
         if (initialPath.isEmpty())
             initialPath = QDir(QStandardPaths::writableLocation(QStandardPaths::MoviesLocation))
-                              .filePath("DroidDesk-recording.mp4");
+                              .filePath("adbtools-recording.mp4");
         const QString path = QFileDialog::getSaveFileName(
             this, "Save scrcpy recording", initialPath,
             "MP4 video (*.mp4);;Matroska video (*.mkv)");
@@ -1943,7 +1996,7 @@ void MainWindow::launchScrcpy()
         QMessageBox::warning(
             this, "scrcpy not found",
             QString("The bundled scrcpy executable was not found.\n\nExpected it at:\n%1\n\n"
-                    "Extract the official Windows release into the scrcpy folder next to DroidDesk.")
+                    "Extract the official Windows release into the scrcpy folder next to adbtools.")
                 .arg(expectedPath));
         return;
     }
@@ -1960,7 +2013,7 @@ void MainWindow::launchScrcpy()
             arguments << "--gamepad=aoa";
     } else {
         arguments << "--window-title"
-                  << QString("DroidDesk - %1").arg(serial);
+                  << QString("adbtools - %1").arg(serial);
         if (virtualDisplay) {
             arguments << "--new-display=" + m_scrcpyVirtualSize->text().trimmed();
             if (m_scrcpyFlexDisplay->isChecked())
@@ -1986,7 +2039,7 @@ void MainWindow::launchScrcpy()
             QString recordingPath = m_scrcpyRecordingPath->text().trimmed();
             if (recordingPath.isEmpty())
                 recordingPath = QDir(QStandardPaths::writableLocation(QStandardPaths::MoviesLocation))
-                                    .filePath("DroidDesk-recording.mp4");
+                                    .filePath("adbtools-recording.mp4");
             recordingPath = QFileDialog::getSaveFileName(
                 this, "Save scrcpy recording", recordingPath,
                 "MP4 video (*.mp4);;Matroska video (*.mkv)");
@@ -2168,7 +2221,7 @@ void MainWindow::loadModuleCatalog()
     QNetworkRequest request(catalogUrl);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
-    request.setRawHeader("User-Agent", "DroidDesk/1.0");
+    request.setRawHeader("User-Agent", "adbtools/1.0");
     m_catalogReply = m_networkManager->get(request);
     auto *timeout = new QTimer(m_catalogReply);
     timeout->setSingleShot(true);
@@ -2330,7 +2383,7 @@ void MainWindow::downloadSelectedModule()
     QNetworkRequest request(archiveUrl);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
-    request.setRawHeader("User-Agent", "DroidDesk/1.0");
+    request.setRawHeader("User-Agent", "adbtools/1.0");
     QNetworkReply *reply = m_networkManager->get(request);
     m_moduleDownloadReply = reply;
     auto *timeout = new QTimer(reply);
@@ -2790,7 +2843,7 @@ void MainWindow::removeMagiskModule()
     if (QMessageBox::warning(
             this, "Schedule Magisk module removal",
             "Mark \"" + item->text() +
-                "\" for removal? Magisk will remove it on the next reboot. This cannot be undone from DroidDesk.",
+                "\" for removal? Magisk will remove it on the next reboot. This cannot be undone from adbtools.",
             QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
         return;
 
