@@ -20,6 +20,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QLocale>
 #include <QMessageBox>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -118,6 +119,12 @@ QIcon themeToggleIcon(bool currentDark)
         }
     }
     return QIcon(pixmap);
+}
+
+void enableSafeRedirects(QNetworkRequest &request)
+{
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
 }
 }
 
@@ -848,7 +855,7 @@ void MainWindow::buildUi()
     QVBoxLayout *storeLayout = nullptr;
     auto *storePage = makeSection("GitHub module catalog", storeLayout);
     auto *storeInfo = new QLabel(
-        "Browse module IDs and download source archives as ZIP or TAR.GZ. Downloads are repository source archives, not verified Magisk installer packages, and are not installed automatically.");
+        "Browse module metadata and download source archives as ZIP or TAR.GZ. Downloads are repository source archives, not verified Magisk installer packages, and are not installed automatically.");
     storeInfo->setObjectName("muted");
     storeInfo->setWordWrap(true);
     storeLayout->addWidget(storeInfo);
@@ -865,6 +872,11 @@ void MainWindow::buildUi()
     m_moduleCatalog = new QListWidget;
     m_moduleCatalog->setSelectionMode(QAbstractItemView::SingleSelection);
     storeLayout->addWidget(m_moduleCatalog, 1);
+    m_moduleDetails = new QPlainTextEdit;
+    m_moduleDetails->setReadOnly(true);
+    m_moduleDetails->setMaximumHeight(150);
+    m_moduleDetails->setPlaceholderText("Select a module to load its metadata.");
+    storeLayout->addWidget(m_moduleDetails);
     auto *archiveActions = new QHBoxLayout;
     archiveActions->addWidget(new QLabel("Archive format"));
     m_moduleArchiveFormat = new QComboBox;
@@ -1382,6 +1394,7 @@ void MainWindow::buildUi()
     connect(m_moduleCatalog, &QListWidget::itemSelectionChanged, this, [this] {
         m_moduleDownload->setEnabled(m_moduleCatalog->currentItem() != nullptr &&
                                      m_moduleDownloadReply == nullptr);
+        showModuleDetails(m_moduleCatalog->currentItem());
     });
     connect(m_moduleDownload, &QPushButton::clicked, this, &MainWindow::downloadSelectedModule);
     connect(clearLog, &QPushButton::clicked, m_output, &QPlainTextEdit::clear);
@@ -2192,7 +2205,7 @@ void MainWindow::loadModuleCatalog()
             m_catalogCurlProcess = nullptr;
             process->deleteLater();
             const QByteArray marker("\nDROIDDESK_EFFECTIVE_URL:");
-            const qsizetype markerIndex = output.lastIndexOf(marker);
+            const auto markerIndex = output.lastIndexOf(marker);
             QUrl finalUrl;
             if (markerIndex >= 0) {
                 finalUrl = QUrl(QString::fromUtf8(output.mid(markerIndex + marker.size())).trimmed());
@@ -2219,8 +2232,7 @@ void MainWindow::loadModuleCatalog()
     }
 
     QNetworkRequest request(catalogUrl);
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
+    enableSafeRedirects(request);
     request.setRawHeader("User-Agent", "adbtools/1.0");
     m_catalogReply = m_networkManager->get(request);
     auto *timeout = new QTimer(m_catalogReply);
@@ -2285,12 +2297,24 @@ void MainWindow::processModuleCatalogResponse(const QByteArray &data, const QUrl
         const QJsonObject object = value.toObject();
         ModuleCatalogEntry entry;
         entry.id = object.value("id").toString();
+        entry.propUrl = object.value("prop_url").toString();
+        entry.notesUrl = object.value("notes_url").toString();
         entry.zipUrl = object.value("zip_url").toString();
+        entry.stars = object.value("stars").toInt(-1);
+        entry.lastUpdated = qint64(object.value("last_update").toDouble());
+        const QUrl propUrl(entry.propUrl);
+        const QUrl notesUrl(entry.notesUrl);
         const QUrl zipUrl(entry.zipUrl);
         const QString repositoryPath =
             QStringLiteral("/Magisk-Modules-Alt-Repo/") + entry.id + QLatin1Char('/');
         if (!safeId.match(entry.id).hasMatch() || entry.id == QStringLiteral(".") ||
-            entry.id == QStringLiteral("..") || seenIds.contains(entry.id) ||
+            entry.id == QStringLiteral("..") || seenIds.contains(entry.id) || entry.stars < 0 ||
+            !propUrl.isValid() || propUrl.scheme() != QStringLiteral("https") ||
+            propUrl.host() != QStringLiteral("raw.githubusercontent.com") ||
+            !propUrl.path().startsWith(repositoryPath) ||
+            !notesUrl.isValid() || notesUrl.scheme() != QStringLiteral("https") ||
+            notesUrl.host() != QStringLiteral("raw.githubusercontent.com") ||
+            !notesUrl.path().startsWith(repositoryPath) ||
             !zipUrl.isValid() || zipUrl.scheme() != QStringLiteral("https") ||
             zipUrl.host() != QStringLiteral("github.com") ||
             !zipUrl.path().startsWith(repositoryPath + QStringLiteral("archive/")) ||
@@ -2306,19 +2330,189 @@ void MainWindow::processModuleCatalogResponse(const QByteArray &data, const QUrl
     }
     std::sort(entries.begin(), entries.end(), [](const ModuleCatalogEntry &left,
                                                  const ModuleCatalogEntry &right) {
+        if (left.stars != right.stars)
+            return left.stars > right.stars;
         return left.id.compare(right.id, Qt::CaseInsensitive) < 0;
     });
     m_catalogEntries = entries;
     m_moduleCatalog->clear();
     for (const ModuleCatalogEntry &entry : m_catalogEntries) {
-        auto *item = new QListWidgetItem(entry.id, m_moduleCatalog);
+        auto *item = new QListWidgetItem(
+            QString("%1  ★ %2").arg(entry.id).arg(entry.stars), m_moduleCatalog);
         item->setData(Qt::UserRole, entry.id);
     }
     m_moduleStoreStatus->setText(
         QString("Loaded %1 validated entries from Magisk-Modules-Alt-Repo.")
             .arg(m_catalogEntries.size()));
     filterModuleCatalog(m_moduleSearch->text());
-    m_moduleDownload->setEnabled(m_moduleCatalog->currentItem() != nullptr);
+    m_moduleDetails->clear();
+    m_moduleDownload->setEnabled(false);
+}
+
+void MainWindow::showModuleDetails(QListWidgetItem *item)
+{
+    if (!item)
+        return;
+    const QString id = item->data(Qt::UserRole).toString();
+    auto entryIt = std::find_if(m_catalogEntries.cbegin(), m_catalogEntries.cend(),
+                                [&id](const ModuleCatalogEntry &entry) { return entry.id == id; });
+    if (entryIt == m_catalogEntries.cend())
+        return;
+
+    if (m_moduleMetadataCurlProcess) {
+        m_moduleMetadataCurlProcess->kill();
+        m_moduleMetadataCurlProcess->deleteLater();
+        m_moduleMetadataCurlProcess = nullptr;
+    }
+    m_moduleDownload->setEnabled(true);
+    m_moduleDetails->setPlainText(
+        QString("Loading metadata for %1…\n\nCatalog stars: %2\nUpdated: %3\n\n"
+                "The catalog ZIP is a GitHub source archive, not a verified Magisk installer ZIP.")
+            .arg(id)
+            .arg(entryIt->stars)
+            .arg(entryIt->lastUpdated > 0
+                     ? QLocale().toString(
+                           QDateTime::fromMSecsSinceEpoch(entryIt->lastUpdated).toLocalTime(),
+                           QLocale::ShortFormat)
+                     : QStringLiteral("unknown")));
+
+    const QUrl metadataUrl(entryIt->propUrl);
+    const auto startCurlMetadataRequest = [this, id, metadataUrl] {
+        const QString curl = QStandardPaths::findExecutable("curl.exe");
+        if (curl.isEmpty()) {
+            processModuleMetadataResponse(
+                id, {}, {},
+                "Could not find curl.exe. Add it to PATH to load metadata over HTTPS.");
+            return;
+        }
+
+        auto *process = new QProcess(this);
+        m_moduleMetadataCurlProcess = process;
+        process->setProgram(curl);
+        process->setArguments({
+            "--location", "--fail", "--silent", "--show-error",
+            "--max-time", "20", "--max-filesize", "1048576",
+            "--proto", "=https", "--proto-redir", "=https",
+            "--write-out", "\nDROIDDESK_EFFECTIVE_URL:%{url_effective}",
+            metadataUrl.toString()
+        });
+        connect(process, &QProcess::readyReadStandardOutput, process, [process] {
+            QByteArray output = process->property("metadataOutput").toByteArray();
+            output.append(process->readAllStandardOutput());
+            if (output.size() > 1024 * 1024 + 8192) {
+                process->setProperty("metadataTooLarge", true);
+                process->kill();
+                return;
+            }
+            process->setProperty("metadataOutput", output);
+        });
+        m_moduleDetails->appendPlainText("Loading metadata using curl…");
+        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+                [this, process, id](int exitCode, QProcess::ExitStatus exitStatus) {
+            QByteArray output = process->property("metadataOutput").toByteArray();
+            output.append(process->readAllStandardOutput());
+            const QString error = QString::fromLocal8Bit(process->readAllStandardError()).trimmed();
+            const bool tooLarge = process->property("metadataTooLarge").toBool() ||
+                                  output.size() > 1024 * 1024 + 8192;
+            if (m_moduleMetadataCurlProcess != process)
+                return;
+            m_moduleMetadataCurlProcess = nullptr;
+            process->deleteLater();
+
+            if (tooLarge) {
+                processModuleMetadataResponse(id, {}, {},
+                                              "metadata response exceeded the 1 MB safety limit");
+                return;
+            }
+            const QByteArray marker("\nDROIDDESK_EFFECTIVE_URL:");
+            const int markerIndex = output.lastIndexOf(marker);
+            QUrl finalUrl;
+            if (markerIndex >= 0) {
+                finalUrl = QUrl(QString::fromUtf8(output.mid(markerIndex + marker.size())).trimmed());
+                output.truncate(markerIndex);
+            }
+            if (exitStatus != QProcess::NormalExit || exitCode != 0) {
+                processModuleMetadataResponse(
+                    id, {}, finalUrl,
+                    error.isEmpty() ? QString("curl exited with code %1").arg(exitCode) : error);
+                return;
+            }
+            processModuleMetadataResponse(id, output, finalUrl, {});
+        });
+        connect(process, &QProcess::errorOccurred, this,
+                [this, process, id](QProcess::ProcessError error) {
+            if (error != QProcess::FailedToStart)
+                return;
+            if (m_moduleMetadataCurlProcess == process)
+                m_moduleMetadataCurlProcess = nullptr;
+            process->deleteLater();
+            processModuleMetadataResponse(
+                id, {}, {},
+                "Could not start curl.exe. Check that curl.exe is available on PATH.");
+        });
+        process->start();
+    };
+    startCurlMetadataRequest();
+}
+
+void MainWindow::processModuleMetadataResponse(const QString &id, const QByteArray &data,
+                                               const QUrl &finalUrl, const QString &error)
+{
+    auto entryIt = std::find_if(m_catalogEntries.begin(), m_catalogEntries.end(),
+                                [&id](const ModuleCatalogEntry &entry) { return entry.id == id; });
+    if (entryIt == m_catalogEntries.end())
+        return;
+
+    const bool validUrl = finalUrl.scheme() == QStringLiteral("https") &&
+                          finalUrl.host() == QStringLiteral("raw.githubusercontent.com");
+    if (!error.isEmpty() || !validUrl) {
+        const QString errorText = error.isEmpty()
+            ? QStringLiteral("the metadata response came from an unexpected host")
+            : error;
+        m_moduleDetails->setPlainText(
+            QString("Could not load metadata for %1: %2\n\n"
+                    "Stars: %3\nUpdated: %4\n\n"
+                    "The catalog download is an unverified GitHub source archive, not a Magisk installer ZIP.")
+                .arg(id, errorText)
+                .arg(entryIt->stars)
+                .arg(entryIt->lastUpdated > 0
+                         ? QLocale().toString(
+                               QDateTime::fromMSecsSinceEpoch(entryIt->lastUpdated).toLocalTime(),
+                               QLocale::ShortFormat)
+                         : QStringLiteral("unknown")));
+        return;
+    }
+
+    const QString properties = QString::fromUtf8(data);
+    auto property = [&properties](const QString &key) {
+        const QString prefix = key + QLatin1Char('=');
+        for (const QString &line : properties.split(QLatin1Char('\n'))) {
+            if (line.startsWith(prefix))
+                return line.mid(prefix.size()).trimmed();
+        }
+        return QString();
+    };
+    entryIt->name = property("name");
+    entryIt->description = property("description");
+    entryIt->version = property("version");
+    entryIt->author = property("author");
+    m_moduleDetails->setPlainText(
+        QString("Name: %1\nID: %2\nVersion: %3\nAuthor: %4\n\nDescription:\n%5\n\n"
+                "Stars: %6\nUpdated: %7\n\n"
+                "Source: Magisk-Modules-Alt-Repo/%2\n"
+                "The catalog ZIP is a repository source archive. adbtools does not treat it as an installable module package.")
+            .arg(entryIt->name.isEmpty() ? id : entryIt->name, id,
+                 entryIt->version.isEmpty() ? QStringLiteral("unknown") : entryIt->version,
+                 entryIt->author.isEmpty() ? QStringLiteral("unknown") : entryIt->author,
+                 entryIt->description.isEmpty() ? QStringLiteral("No description provided.")
+                                                : entryIt->description)
+            .arg(entryIt->stars)
+            .arg(entryIt->lastUpdated > 0
+                     ? QLocale().toString(
+                           QDateTime::fromMSecsSinceEpoch(entryIt->lastUpdated).toLocalTime(),
+                           QLocale::ShortFormat)
+                     : QStringLiteral("unknown")));
+    filterModuleCatalog(m_moduleSearch->text());
 }
 
 void MainWindow::downloadSelectedModule()
@@ -2381,8 +2575,7 @@ void MainWindow::downloadSelectedModule()
     m_moduleDownloadPrefix.clear();
 
     QNetworkRequest request(archiveUrl);
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
+    enableSafeRedirects(request);
     request.setRawHeader("User-Agent", "adbtools/1.0");
     QNetworkReply *reply = m_networkManager->get(request);
     m_moduleDownloadReply = reply;
@@ -2483,6 +2676,13 @@ void MainWindow::filterModuleCatalog(const QString &text)
     if (m_moduleCatalog->currentItem() && m_moduleCatalog->currentItem()->isHidden()) {
         m_moduleCatalog->clearSelection();
         m_moduleCatalog->setCurrentItem(nullptr);
+        if (m_moduleMetadataCurlProcess) {
+            m_moduleMetadataCurlProcess->kill();
+            m_moduleMetadataCurlProcess->deleteLater();
+            m_moduleMetadataCurlProcess = nullptr;
+        }
+        m_moduleDownload->setEnabled(false);
+        m_moduleDetails->clear();
     }
     if (!m_moduleCatalog->currentItem())
         m_moduleDownload->setEnabled(false);

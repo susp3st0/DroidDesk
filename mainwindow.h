@@ -11,6 +11,7 @@ class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QListWidgetItem;
 class QPlainTextEdit;
 class QProcess;
 class QProgressBar;
@@ -20,6 +21,7 @@ class QTimer;
 class QNetworkAccessManager;
 class QNetworkReply;
 class QSaveFile;
+class QUrl;
 
 class MainWindow : public QMainWindow
 {
@@ -40,7 +42,15 @@ private:
 
     struct ModuleCatalogEntry {
         QString id;
+        QString propUrl;
+        QString notesUrl;
         QString zipUrl;
+        QString name;
+        QString description;
+        QString version;
+        QString author;
+        int stars = 0;
+        qint64 lastUpdated = 0;
     };
 
     CommandResult runAdb(const QStringList &arguments, int timeoutMs = 30000);
@@ -63,6 +73,7 @@ private:
     void runSelinuxCommand(bool changeMode, bool enforcing);
     void applyTheme(const QString &theme);
     void loadModuleCatalog();
+    void showModuleDetails(QListWidgetItem *item);
     void downloadSelectedModule();
     void filterModuleCatalog(const QString &text);
     void logCommand(const QString &label, const CommandResult &result);
@@ -133,12 +144,14 @@ private:
     QListWidget *m_magiskModules = nullptr;
     QLineEdit *m_moduleSearch = nullptr;
     QListWidget *m_moduleCatalog = nullptr;
+    QPlainTextEdit *m_moduleDetails = nullptr;
     QLabel *m_moduleStoreStatus = nullptr;
     QComboBox *m_moduleArchiveFormat = nullptr;
     QPushButton *m_moduleDownload = nullptr;
     QNetworkAccessManager *m_networkManager = nullptr;
     QNetworkReply *m_catalogReply = nullptr;
     QProcess *m_catalogCurlProcess = nullptr;
+    QProcess *m_moduleMetadataCurlProcess = nullptr;
     QNetworkReply *m_moduleDownloadReply = nullptr;
     QSaveFile *m_moduleDownloadFile = nullptr;
     QString m_moduleDownloadPath;
@@ -146,6 +159,8 @@ private:
     QVector<ModuleCatalogEntry> m_catalogEntries;
     void processModuleCatalogResponse(const QByteArray &data, const QUrl &finalUrl,
                                       const QString &error);
+    void processModuleMetadataResponse(const QString &id, const QByteArray &data,
+                                       const QUrl &finalUrl, const QString &error);
     QLineEdit *m_logcatFilter = nullptr;
     QComboBox *m_logcatLevel = nullptr;
     QPushButton *m_logcatToggle = nullptr;
